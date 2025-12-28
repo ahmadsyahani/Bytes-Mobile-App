@@ -16,7 +16,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final ImagePicker _picker = ImagePicker();
   bool _isUploading = false;
 
-  // --- HELPER: FORMAT TANGGAL ---
+  // --- HELPER FORMAT TANGGAL ---
   String _formatDate(String? dateString) {
     if (dateString == null || dateString.isEmpty) return "Belum Diatur";
     try {
@@ -41,7 +41,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // --- LOGIC DATABASE UTAMA ---
+  // --- LOGIC DATABASE ---
   Future<void> _updatePhoto(ImageSource source) async {
     final XFile? image = await _picker.pickImage(
       source: source,
@@ -95,94 +95,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
     await showDialog(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                "Ganti Nama Panggilan",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F6FA),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: TextField(
-                  controller: controller,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                  decoration: const InputDecoration(
-                    hintText: "Contoh: Alex",
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 14,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        "Batal",
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        if (controller.text.isNotEmpty) {
-                          final userId = _supabase.auth.currentUser!.id;
-                          await _supabase
-                              .from('profiles')
-                              .update({'nickname': controller.text.trim()})
-                              .eq('id', userId);
-                          if (mounted) Navigator.pop(context);
-                          setState(() {});
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4C6EF5),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        "Simpan",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+      builder: (context) => _buildEditDialog(
+        title: "Ganti Nama Panggilan",
+        hint: "Contoh: Alex",
+        controller: controller,
+        onSave: () async {
+          if (controller.text.isNotEmpty) {
+            final userId = _supabase.auth.currentUser!.id;
+            await _supabase
+                .from('profiles')
+                .update({'nickname': controller.text.trim()})
+                .eq('id', userId);
+            if (mounted) Navigator.pop(context);
+            setState(() {});
+          }
+        },
+      ),
+    );
+  }
+
+  Future<void> _editPhone(String currentPhone) async {
+    final TextEditingController controller = TextEditingController(
+      text: currentPhone,
+    );
+    await showDialog(
+      context: context,
+      builder: (context) => _buildEditDialog(
+        title: "Ganti Nomor HP",
+        hint: "Contoh: 08123456789",
+        controller: controller,
+        inputType: TextInputType.phone,
+        onSave: () async {
+          if (controller.text.isNotEmpty) {
+            final userId = _supabase.auth.currentUser!.id;
+            await _supabase
+                .from('profiles')
+                .update({'phone': controller.text.trim()})
+                .eq('id', userId);
+            if (mounted) Navigator.pop(context);
+            setState(() {});
+          }
+        },
       ),
     );
   }
@@ -289,74 +242,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- FUNGSI BARU: PILIH TANGGAL LAHIR ---
   Future<void> _pickBirthDate() async {
-    // 1. Buka Kalender
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(2005), // Default tahun 2005 (Umur Mahasiswa)
+      initialDate: DateTime(2005),
       firstDate: DateTime(1990),
       lastDate: DateTime.now(),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF4C6EF5)),
-          ),
-          child: child!,
-        );
-      },
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(primary: Color(0xFF4C6EF5)),
+        ),
+        child: child!,
+      ),
     );
-
-    if (picked != null) {
-      // 2. Tampilkan Konfirmasi (Alert)
-      _confirmBirthDate(picked);
-    }
+    if (picked != null) _confirmBirthDate(picked);
   }
 
-  // --- FUNGSI BARU: KONFIRMASI DAN SIMPAN TANGGAL ---
   Future<void> _confirmBirthDate(DateTime date) async {
-    // Format tanggal buat ditampilkan di dialog (biar user yakin)
+    String formattedDB =
+        "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
     String displayDate = "${date.day}/${date.month}/${date.year}";
-
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text(
-          "Konfirmasi Tanggal Lahir",
+          "Konfirmasi",
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Anda memilih: $displayDate",
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.orange.shade200),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.orange),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      "Perhatian: Data ini hanya dapat diisi SATU KALI dan tidak bisa diubah lagi.",
-                      style: TextStyle(fontSize: 12, color: Colors.brown),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        content: Text(
+          "Simpan tanggal lahir: $displayDate?\nData tidak bisa diubah lagi.",
         ),
         actions: [
           TextButton(
@@ -365,28 +281,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              // 3. Simpan ke Database
               final userId = _supabase.auth.currentUser!.id;
-              // Format ke String "YYYY-MM-DD" untuk Supabase
-              String formattedDate =
-                  "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
-
               await _supabase
                   .from('profiles')
-                  .update({'birth_date': formattedDate})
+                  .update({'birth_date': formattedDB})
                   .eq('id', userId);
-
               if (mounted) Navigator.pop(context);
               setState(() {});
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF4C6EF5),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
             ),
             child: const Text(
-              "Simpan Permanen",
+              "Ya, Simpan",
               style: TextStyle(color: Colors.white),
             ),
           ),
@@ -397,13 +304,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _handleLogout() async {
     await _supabase.auth.signOut();
-    if (mounted) {
+    if (mounted)
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const LoginScreen()),
         (route) => false,
       );
-    }
   }
 
   // --- UI UTAMA ---
@@ -411,10 +317,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final userId = _supabase.auth.currentUser!.id;
     final Color primaryBlue = const Color(0xFF4C6EF5);
-    final double screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF9F8F4),
+      extendBodyBehindAppBar:
+          true, // PENTING: Biar AppBar ngambang di atas background
+      appBar: AppBar(
+        backgroundColor:
+            Colors.transparent, // Transparan biar background biru kelihatan
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(
+            Icons.arrow_back,
+            color: Colors.white,
+          ), // Tombol Back Putih
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          "My Profile",
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ), // Judul Putih
+        ),
+      ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: _supabase
             .from('profiles')
@@ -423,14 +349,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         builder: (context, snapshot) {
           String fullName = "Mahasiswa";
           String nickname = "";
-          String nrp = "Loading...";
-          String email = "Loading...";
+          String nrp = "...";
+          String email = "...";
+          String phone = "-";
+          String role = "member";
           String? photoUrl;
           String gender = "-";
-          String birthDateDisplay = "Loading..."; // Tampilan di UI
-
+          String birthDateDisplay = "...";
           bool isGenderSet = false;
-          bool isBirthDateSet = false; // Flag cek status tanggal lahir
+          bool isBirthDateSet = false;
 
           if (snapshot.hasData && snapshot.data!.isNotEmpty) {
             final data = snapshot.data!.first;
@@ -438,9 +365,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             nickname = data['nickname'] ?? "";
             nrp = data['nrp'] ?? "-";
             email = data['email'] ?? "-";
+            phone = data['phone'] ?? "-";
+            role = data['role'] ?? "member";
             photoUrl = data['photo_url'];
 
-            // LOGIC TANGGAL LAHIR
             if (data['birth_date'] != null && data['birth_date'] != "") {
               isBirthDateSet = true;
               birthDateDisplay = _formatDate(data['birth_date']);
@@ -448,14 +376,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               birthDateDisplay = "Belum Diatur";
             }
 
-            // LOGIC GENDER
             final gCode = data['gender'];
             if (gCode != null && gCode != "") {
               isGenderSet = true;
-              if (gCode == 'L')
-                gender = "Laki-laki";
-              else if (gCode == 'P')
-                gender = "Perempuan";
+              gender = (gCode == 'L') ? "Laki-laki" : "Perempuan";
             } else {
               gender = "Belum Diatur";
             }
@@ -464,63 +388,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           return Stack(
             children: [
-              // HEADER (Sama)
+              // --- LAYER 1: FIXED BACKGROUND (BIRU) ---
               Container(
-                height: 260,
+                height: 420, // Tinggi area biru
                 width: double.infinity,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [primaryBlue, const Color(0xFF6C88F7)],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                  borderRadius: BorderRadius.vertical(
-                    bottom: Radius.elliptical(screenWidth, 100),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: primaryBlue.withOpacity(0.3),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-              ),
-
-              // KONTEN
-              SingleChildScrollView(
-                child: Column(
-                  children: [
-                    const SizedBox(height: 180),
-                    // FOTO PROFIL (Sama)
-                    Center(
-                      child: Stack(
+                decoration: BoxDecoration(color: primaryBlue),
+                child: SafeArea(
+                  // Biar konten gak ketutup poni HP
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 50), // Jarak dari AppBar
+                      // FOTO PROFIL
+                      Stack(
                         alignment: Alignment.bottomRight,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(5),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF9F8F4),
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
                               shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 5),
-                                ),
-                              ],
                             ),
                             child: CircleAvatar(
-                              radius: 65,
-                              backgroundColor: Colors.white,
+                              radius: 55,
+                              backgroundColor: Colors.grey[200],
                               backgroundImage: photoUrl != null
                                   ? NetworkImage(photoUrl)
                                   : null,
                               child: photoUrl == null
                                   ? Icon(
                                       Icons.person,
-                                      size: 65,
-                                      color: Colors.grey[300],
+                                      size: 55,
+                                      color: Colors.grey[400],
                                     )
                                   : null,
                             ),
@@ -528,15 +426,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           GestureDetector(
                             onTap: _showImageSourceModal,
                             child: Container(
-                              margin: const EdgeInsets.all(8),
                               padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF212121),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF212121),
                                 shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
                               ),
                               child: _isUploading
                                   ? const SizedBox(
@@ -550,65 +443,97 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   : const Icon(
                                       Icons.camera_alt,
                                       color: Colors.white,
-                                      size: 18,
+                                      size: 16,
                                     ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    // NAMA (Sama)
-                    Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              displayName,
-                              style: const TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
+
+                      const SizedBox(height: 16),
+
+                      // NAMA & EDIT ICON
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            displayName,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => _editNickname(nickname),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.edit,
+                                size: 14,
+                                color: Colors.white,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            GestureDetector(
-                              onTap: () => _editNickname(nickname),
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: primaryBlue.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Icon(
-                                  Icons.edit,
-                                  size: 16,
-                                  color: primaryBlue,
-                                ),
-                              ),
-                            ),
-                          ],
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 8),
+
+                      // ROLE BADGE
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 6,
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          nickname.isNotEmpty
-                              ? fullName
-                              : "Mahasiswa Teknik Informatika",
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 14,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          role.toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 1,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 30),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
 
-                    // --- INFO CARDS ---
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
+              // --- LAYER 2: SCROLLABLE WHITE CARD ---
+              SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // Memberi jarak transparan agar header biru terlihat
+                    const SizedBox(height: 360),
+
+                    // KONTAINER PUTIH (CARD)
+                    Container(
+                      width: double.infinity,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF9F8F4), // Background agak abu
+                        borderRadius: BorderRadius.only(
+                          topLeft: Radius.circular(30),
+                          topRight: Radius.circular(30),
+                        ),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 30,
+                      ),
                       child: Column(
                         children: [
+                          // LIST DATA
                           _buildInfoCard(
                             title: "NRP",
                             value: nrp,
@@ -616,6 +541,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             primaryBlue: primaryBlue,
                           ),
                           const SizedBox(height: 16),
+
+                          GestureDetector(
+                            onTap: () => _editPhone(phone),
+                            child: _buildInfoCard(
+                              title: "WhatsApp / No HP",
+                              value: phone,
+                              icon: Icons.phone_android_rounded,
+                              primaryBlue: primaryBlue,
+                              showEditIcon: true,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+
                           _buildInfoCard(
                             title: "Email",
                             value: email,
@@ -624,20 +562,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           const SizedBox(height: 16),
 
-                          // --- KARTU TANGGAL LAHIR (LOGIC BARU) ---
                           GestureDetector(
                             onTap: isBirthDateSet
-                                ? () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          "Tanggal lahir sudah diatur dan tidak dapat diubah.",
+                                ? () => ScaffoldMessenger.of(context)
+                                      .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            "Tidak dapat diubah lagi.",
+                                          ),
+                                          backgroundColor: Colors.orange,
                                         ),
-                                        backgroundColor: Colors.orange,
-                                      ),
-                                    );
-                                  }
-                                : _pickBirthDate, // Buka Kalender kalau belum diset
+                                      )
+                                : _pickBirthDate,
                             child: _buildInfoCard(
                               title: "Tanggal Lahir",
                               value: birthDateDisplay,
@@ -645,25 +581,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               primaryBlue: isBirthDateSet
                                   ? primaryBlue
                                   : Colors.grey,
-                              showEditIcon:
-                                  !isBirthDateSet, // Hilang kalau udah diset
+                              showEditIcon: !isBirthDateSet,
                             ),
                           ),
                           const SizedBox(height: 16),
 
-                          // --- KARTU GENDER ---
                           GestureDetector(
                             onTap: isGenderSet
-                                ? () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          "Jenis kelamin sudah diatur dan tidak dapat diubah.",
+                                ? () => ScaffoldMessenger.of(context)
+                                      .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            "Tidak dapat diubah lagi.",
+                                          ),
+                                          backgroundColor: Colors.orange,
                                         ),
-                                        backgroundColor: Colors.orange,
-                                      ),
-                                    );
-                                  }
+                                      )
                                 : _editGender,
                             child: _buildInfoCard(
                               title: "Jenis Kelamin",
@@ -680,6 +613,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
+
                           _buildInfoCard(
                             title: "Status Akademik",
                             value: "Mahasiswa Aktif",
@@ -687,94 +621,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             primaryBlue: Colors.green,
                             isStatus: true,
                           ),
+
+                          const SizedBox(height: 40),
+
+                          // LOGOUT BUTTON
+                          SizedBox(
+                            width: double.infinity,
+                            height: 55,
+                            child: OutlinedButton(
+                              onPressed: _handleLogout,
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(
+                                  color: Color(0xFFFF5252),
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                backgroundColor: const Color(
+                                  0xFFFF5252,
+                                ).withOpacity(0.05),
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.logout, color: Color(0xFFFF5252)),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    "Log Out",
+                                    style: TextStyle(
+                                      color: Color(0xFFFF5252),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 50),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 40),
-                    // LOGOUT
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 55,
-                        child: OutlinedButton(
-                          onPressed: _handleLogout,
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFFFF5252)),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            backgroundColor: const Color(
-                              0xFFFF5252,
-                            ).withOpacity(0.05),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.logout, color: Color(0xFFFF5252)),
-                              SizedBox(width: 8),
-                              Text(
-                                "Log Out",
-                                style: TextStyle(
-                                  color: Color(0xFFFF5252),
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 40),
                   ],
-                ),
-              ),
-
-              // BACK BUTTON (Sama)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    child: Row(
-                      children: [
-                        Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(50),
-                            onTap: () => Navigator.pop(context),
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black.withOpacity(0.1),
-                              ),
-                              child: const Icon(
-                                Icons.arrow_back,
-                                color: Colors.white,
-                                size: 24,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Text(
-                          "My Profile",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ),
               ),
             ],
@@ -784,66 +673,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- WIDGET HELPER (Sama) ---
-  void _showImageSourceModal() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        height: 180,
-        child: Column(
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildSourceButton(Icons.image, "Gallery", ImageSource.gallery),
-                _buildSourceButton(
-                  Icons.camera_alt,
-                  "Camera",
-                  ImageSource.camera,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSourceButton(IconData icon, String label, ImageSource source) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.pop(context);
-        _updatePhoto(source);
-      },
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF4C6EF5).withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 32, color: const Color(0xFF4C6EF5)),
-          ),
-          const SizedBox(height: 8),
-          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
+  // --- HELPER WIDGETS ---
 
   Widget _buildInfoCard({
     required String title,
@@ -903,6 +733,151 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           if (showEditIcon)
             const Icon(Icons.edit, size: 16, color: Colors.grey),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEditDialog({
+    required String title,
+    required String hint,
+    required TextEditingController controller,
+    required VoidCallback onSave,
+    TextInputType inputType = TextInputType.text,
+  }) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F6FA),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: TextField(
+                controller: controller,
+                keyboardType: inputType,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                decoration: InputDecoration(
+                  hintText: hint,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text(
+                      "Batal",
+                      style: TextStyle(
+                        color: Colors.grey,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: onSave,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4C6EF5),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      "Simpan",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showImageSourceModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        height: 180,
+        child: Column(
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildSourceButton(Icons.image, "Gallery", ImageSource.gallery),
+                _buildSourceButton(
+                  Icons.camera_alt,
+                  "Camera",
+                  ImageSource.camera,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSourceButton(IconData icon, String label, ImageSource source) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(context);
+        _updatePhoto(source);
+      },
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF4C6EF5).withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 32, color: const Color(0xFF4C6EF5)),
+          ),
+          const SizedBox(height: 8),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
         ],
       ),
     );

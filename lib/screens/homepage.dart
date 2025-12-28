@@ -2,13 +2,13 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
 
 // WIDGETS
 import '../widgets/header_section.dart';
 import '../widgets/finance_card.dart';
 import '../widgets/menu_button.dart';
 import '../widgets/schedule_card.dart';
-import '../widgets/task_card.dart';
 import '../widgets/custom_bottom_nav.dart';
 
 // SCREENS
@@ -18,8 +18,7 @@ import 'jadwal_screen.dart';
 import 'kas_screen.dart';
 import 'cek_kas_screen.dart';
 import 'profile_screen.dart';
-import 'lecturer_screen.dart'; // Jangan lupa import ini
-import 'classmate_screen.dart'; // Import ini juga
+import 'classmate_screen.dart'; // Jangan lupa import teman sekelas
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -33,46 +32,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Map<String, dynamic>? _profileData;
   List<Map<String, dynamic>> _birthdayMates = [];
+
+  // VARIABLE DATA DINAMIS
+  List<Map<String, dynamic>> _upcomingTasks = [];
+  List<Map<String, dynamic>> _todaysSchedule = [];
+
+  // ROLE USER (Default member)
+  String _userRole = 'member';
+
   bool _showBirthdayBanner = true;
   bool _isLoading = true;
-
-  // --- DATA DUMMY JADWAL (DATABASE SEMENTARA) ---
-  // day: 1=Senin, 2=Selasa, 3=Rabu, 4=Kamis, 5=Jumat, 6=Sabtu, 7=Minggu
-  final List<Map<String, dynamic>> _allSchedules = [
-    {
-      "day": 1, // Senin
-      "title": "Upacara Bendera",
-      "subtitle": "Lapangan Merah",
-      "time": "07:00 - 08:00",
-      "room": "Lapangan",
-      "lecturer": "-",
-    },
-    {
-      "day": 1, // Senin
-      "title": "Logika Algoritma",
-      "subtitle": "Flowchart Dasar",
-      "time": "08:00 - 10:00",
-      "room": "B.203",
-      "lecturer": "Dr. Budi",
-    },
-    {
-      "day": 2, // Selasa
-      "title": "Basis Data",
-      "subtitle": "ERD & Normalisasi",
-      "time": "10:00 - 12:00",
-      "room": "Lab Database",
-      "lecturer": "Siti Aminah",
-    },
-    {
-      "day": 3, // Rabu
-      "title": "Workshop Web",
-      "subtitle": "Flutter Layout",
-      "time": "13:00 - 15:00",
-      "room": "Lab Multimedia",
-      "lecturer": "Pak Dika",
-    },
-    // ... Tambahkan jadwal lain
-  ];
 
   @override
   void initState() {
@@ -80,52 +49,83 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadDataWithCache();
   }
 
-  // --- FUNGSI LOAD DATA (TETAP SAMA) ---
+  // --- FUNGSI LOAD DATA ---
   Future<void> _loadDataWithCache() async {
     final prefs = await SharedPreferences.getInstance();
     final userId = _supabase.auth.currentUser?.id;
 
     if (userId == null) return;
 
+    // 1. Load Cache Profil
     final cachedProfile = prefs.getString('cached_profile');
-    final cachedBirthday = prefs.getString('cached_birthday');
-
     if (cachedProfile != null) {
       if (mounted) {
         setState(() {
           _profileData = jsonDecode(cachedProfile);
-          if (cachedBirthday != null) {
-            _birthdayMates = List<Map<String, dynamic>>.from(
-              jsonDecode(cachedBirthday),
-            );
-          }
-          _isLoading = false;
+          // Ambil role dari cache kalau ada
+          _userRole = _profileData?['role'] ?? 'member';
         });
       }
     }
 
     try {
+      // 2. Fetch Data Segar dari Supabase
+
+      // A. Profil & Role
       final profileRes = await _supabase
           .from('profiles')
           .select()
           .eq('id', userId);
+
+      // B. Ulang Tahun
       final birthdayRes = await _supabase.rpc('get_birthday_mates');
+
+      // C. TUGAS TERDEKAT (LOGIC FILTER H-5)
+      final now = DateTime.now();
+      final todayStart = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).toIso8601String();
+      final fiveDaysLater = now.add(const Duration(days: 5)).toIso8601String();
+
+      final tasksRes = await _supabase
+          .from('tasks')
+          .select()
+          .gte('deadline', todayStart)
+          .lte('deadline', fiveDaysLater)
+          .order('deadline', ascending: true);
+
+      // D. JADWAL HARI INI
+      int todayIndex = DateTime.now().weekday; // 1=Senin
+
+      final scheduleRes = await _supabase
+          .from('schedules')
+          .select()
+          .eq('day', todayIndex)
+          .order('time_start', ascending: true);
 
       if (mounted) {
         setState(() {
           if (profileRes.isNotEmpty) {
             _profileData = profileRes.first;
+            // UPDATE ROLE DARI DATABASE
+            _userRole = _profileData?['role'] ?? 'member';
           }
           _birthdayMates = List<Map<String, dynamic>>.from(birthdayRes);
+          _upcomingTasks = List<Map<String, dynamic>>.from(tasksRes);
+          _todaysSchedule = List<Map<String, dynamic>>.from(scheduleRes);
+
           _isLoading = false;
         });
 
+        // Simpan cache
         await prefs.setString('cached_profile', jsonEncode(profileRes.first));
         await prefs.setString('cached_birthday', jsonEncode(birthdayRes));
       }
     } catch (e) {
-      debugPrint("Offline Mode: $e");
-      if (mounted && _profileData == null) {
+      debugPrint("Error Fetch Data: $e");
+      if (mounted) {
         setState(() => _isLoading = false);
       }
     }
@@ -135,6 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadDataWithCache();
   }
 
+  // --- HELPER LOGIC ---
   String _getGreeting() {
     var hour = DateTime.now().hour;
     if (hour >= 4 && hour < 11) return "Selamat Pagi";
@@ -143,7 +144,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return "Selamat Malam";
   }
 
-  // Helper: Tanggal Hari Ini (Contoh: "Senin, 14 Okt")
   String _getTodayDateString() {
     final now = DateTime.now();
     List<String> days = [
@@ -172,12 +172,54 @@ class _HomeScreenState extends State<HomeScreen> {
     return "${days[now.weekday - 1]}, ${now.day} ${months[now.month - 1]}";
   }
 
+  String _formatTime(String timeStr) {
+    try {
+      final parts = timeStr.split(':');
+      return "${parts[0]}:${parts[1]}";
+    } catch (e) {
+      return timeStr;
+    }
+  }
+
+  Map<String, dynamic> _getDeadlineInfo(String dateString) {
+    final deadline = DateTime.parse(dateString);
+    final now = DateTime.now();
+    final dDate = DateTime(deadline.year, deadline.month, deadline.day);
+    final nDate = DateTime(now.year, now.month, now.day);
+    final difference = dDate.difference(nDate).inDays;
+
+    if (difference < 0)
+      return {
+        'text': 'LEWAT',
+        'color': Colors.grey,
+        'bg': Colors.grey.shade200,
+      };
+    if (difference == 0)
+      return {
+        'text': 'HARI INI',
+        'color': Colors.red,
+        'bg': Colors.red.shade100,
+      };
+    if (difference == 1)
+      return {'text': 'BESOK', 'color': Colors.red, 'bg': Colors.red.shade50};
+    if (difference < 3)
+      return {
+        'text': 'H-$difference',
+        'color': Colors.orange,
+        'bg': Colors.orange.shade50,
+      };
+    return {
+      'text': 'H-$difference',
+      'color': const Color(0xFF4C6EF5),
+      'bg': const Color(0xFFE3F2FD),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final Color primaryBlue = const Color(0xFF4C6EF5);
     final Color cardBlue = const Color(0xFF7B94FF);
     final Color yellowAccent = const Color(0xFFFFCE31);
-    final Color redAccent = const Color(0xFFFF8B8B);
 
     if (_isLoading && _profileData == null) {
       return const Scaffold(
@@ -189,7 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
     String fullName = _profileData?['full_name'] ?? "Mahasiswa";
     String nrp = _profileData?['nrp'] ?? "-";
     String? photoUrl = _profileData?['photo_url'];
-    int kasTotal = _profileData?['kas_total'] ?? 150000;
+    int kasTotal = _profileData?['kas_total'] ?? 0;
     int kasPaid = _profileData?['kas_paid'] ?? 0;
 
     String displayName = fullName.split(" ")[0];
@@ -197,15 +239,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _profileData!['nickname'].toString().isNotEmpty) {
       displayName = _profileData!['nickname'];
     }
-
-    // --- LOGIC FILTER JADWAL HARI INI ---
-    int todayIndex = DateTime.now().weekday;
-    // UNTUK TESTING (Ganti angka 1-7 untuk cek tampilan hari lain):
-    // todayIndex = 1;
-
-    final List<Map<String, dynamic>> todaysSchedule = _allSchedules
-        .where((s) => s['day'] == todayIndex)
-        .toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF9F8F4),
@@ -220,6 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // HEADER
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -260,34 +294,35 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // 1. CEK KAS
+                        // MENU 1: TEMAN (Ganti Cek Kas jadi Teman biar balance)
                         MenuButton(
-                          icon: Icons.account_balance_wallet,
-                          label: "Cek Kas",
+                          icon: Icons.people_alt_rounded,
+                          label: "Teman",
                           color: primaryBlue,
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const CekKasScreen(),
+                              builder: (context) => const ClassmateScreen(),
                             ),
                           ),
                         ),
 
-                        // 2. TUGAS (KEMBALI KE TUGAS)
+                        // MENU 2: TUGAS (LOGIC ADMIN)
                         MenuButton(
-                          icon: Icons.assignment, // Icon Tugas
-                          label: "Tugas", // Label Tugas
+                          icon: Icons.assignment,
+                          label: "Tugas",
                           color: primaryBlue,
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              // Arahkan ke TugasScreen lagi
-                              builder: (context) => const TugasScreen(),
+                              // Kirim parameter: kalau BUKAN admin, berarti ReadOnly (Gak bisa edit)
+                              builder: (context) =>
+                                  TugasScreen(isReadOnly: _userRole != 'admin'),
                             ),
-                          ),
+                          ).then((_) => _refreshData()),
                         ),
 
-                        // 3. JADWAL
+                        // MENU 3: JADWAL
                         MenuButton(
                           icon: Icons.calendar_today_rounded,
                           label: "Jadwal",
@@ -300,7 +335,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
 
-                        // 4. MATERI
+                        // MENU 4: MATERI
                         MenuButton(
                           icon: Icons.folder,
                           label: "Materi",
@@ -318,7 +353,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   const SizedBox(height: 30),
 
-                  // --- HEADER SECTION JADWAL ---
+                  // JADWAL HARI INI
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Row(
@@ -343,22 +378,45 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                  // --- LOGIC TAMPILAN JADWAL ---
-                  if (todaysSchedule.isEmpty)
-                    _buildEmptyScheduleState() // TAMPILAN KOSONG
+                  if (_todaysSchedule.isEmpty)
+                    _buildEmptyScheduleState()
                   else
-                    _buildJadwalList(
-                      todaysSchedule,
-                      cardBlue,
-                      yellowAccent,
-                    ), // TAMPILAN ADA JADWAL
+                    _buildJadwalList(_todaysSchedule, cardBlue, yellowAccent),
 
                   const SizedBox(height: 30),
-                  _buildSectionTitle(
-                    "Tugas Mendekati Deadline",
-                    showArrows: false,
+
+                  // TUGAS MENDEKATI DEADLINE
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          "Tugas Mendekati Deadline",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                // Pas klik 'Lihat Semua' juga kirim logic admin
+                                builder: (context) => TugasScreen(
+                                  isReadOnly: _userRole != 'admin',
+                                ),
+                              ),
+                            ).then((_) => _refreshData());
+                          },
+                          child: const Text("Lihat Semua"),
+                        ),
+                      ],
+                    ),
                   ),
-                  _buildTugasList(redAccent, cardBlue),
+
+                  _buildDynamicTaskList(),
                 ],
               ),
             ),
@@ -385,7 +443,143 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- WIDGETS ---
+  // --- WIDGETS BUILDER ---
+
+  Widget _buildDynamicTaskList() {
+    if (_upcomingTasks.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.check, color: Colors.green.shade400),
+            ),
+            const SizedBox(width: 16),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Aman Terkendali!",
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  "Tidak ada tugas mendesak (H-5).",
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 140,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        scrollDirection: Axis.horizontal,
+        itemCount: _upcomingTasks.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 16),
+        itemBuilder: (context, index) {
+          final task = _upcomingTasks[index];
+          final deadlineInfo = _getDeadlineInfo(task['deadline']);
+          final dateObj = DateTime.parse(task['deadline']);
+
+          return Container(
+            width: 260,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.grey.shade100),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.03),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        task['matkul'],
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: deadlineInfo['bg'],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        deadlineInfo['text'],
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: deadlineInfo['color'],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  task['title'],
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.calendar_today,
+                      size: 12,
+                      color: Colors.grey,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      DateFormat('d MMM yyyy', 'id').format(dateObj),
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Widget _buildEmptyScheduleState() {
     return Container(
@@ -402,14 +596,14 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               color: Colors.white,
               shape: BoxShape.circle,
             ),
             child: const Icon(
               Icons.weekend_rounded,
               size: 30,
-              color: const Color(0xFF4C6EF5),
+              color: Color(0xFF4C6EF5),
             ),
           ),
           const SizedBox(height: 12),
@@ -439,9 +633,10 @@ class _HomeScreenState extends State<HomeScreen> {
           return Padding(
             padding: const EdgeInsets.only(right: 16),
             child: ScheduleCard(
-              time: schedule['time'],
-              title: schedule['title'],
-              subtitle: schedule['subtitle'],
+              time:
+                  "${_formatTime(schedule['time_start'])} - ${_formatTime(schedule['time_end'])}",
+              title: schedule['matkul'],
+              subtitle: schedule['type'] ?? 'Teori',
               room: schedule['room'],
               lecturer: schedule['lecturer'],
               color: cardBlue,
@@ -449,21 +644,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildTugasList(Color redAccent, Color cardBlue) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      child: TaskCard(
-        title: "Logika dan Algoritma",
-        desc: "Membuat Flowchart",
-        startDate: "Senin, 13 Okt",
-        endDate: "Selasa, 21 Okt",
-        status: "Kerjakan",
-        statusColor: redAccent,
-        cardColor: cardBlue,
       ),
     );
   }
@@ -495,29 +675,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildSectionTitle(String title, {required bool showArrows}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          if (showArrows)
-            const Row(
-              children: [
-                Icon(Icons.arrow_back, size: 20, color: Colors.grey),
-                SizedBox(width: 8),
-                Icon(Icons.arrow_forward, size: 20, color: Colors.blue),
-              ],
-            ),
-        ],
       ),
     );
   }
