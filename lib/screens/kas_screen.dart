@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // PERLU INI BUAT FORMATTER
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart'; // PERLU PACKAGE INTL (Pastikan sudah ada di pubspec.yaml)
+import 'package:intl/intl.dart';
 
 class KasScreen extends StatefulWidget {
   const KasScreen({super.key});
@@ -12,10 +12,18 @@ class KasScreen extends StatefulWidget {
 
 class _KasScreenState extends State<KasScreen> {
   final _supabase = Supabase.instance.client;
+
+  // Controller Nominal
   final TextEditingController _amountController = TextEditingController();
-  final TextEditingController _noteController = TextEditingController();
+
+  // Controller Keterangan (Hanya dipakai kalau pilih 'Lainnya')
+  final TextEditingController _customNoteController = TextEditingController();
 
   bool _isLoading = false;
+
+  // --- OPSI KATEGORI ---
+  final List<String> _categories = ["Uang Kas", "Denda", "Lainnya"];
+  String _selectedCategory = "Uang Kas"; // Default pilihan
 
   // Pilihan Nominal Cepat
   final List<int> _quickAmounts = [10000, 20000, 50000, 100000];
@@ -23,23 +31,118 @@ class _KasScreenState extends State<KasScreen> {
   @override
   void dispose() {
     _amountController.dispose();
-    _noteController.dispose();
+    _customNoteController.dispose();
     super.dispose();
   }
 
-  // --- LOGIC FORMATTER MANUAL (Biar tombol Chips juga ada titiknya) ---
-  String _formatNumber(int number) {
-    final formatter = NumberFormat.decimalPattern('id'); // Format Indo (10.000)
-    return formatter.format(number);
+  // --- POPUP SUKSES ---
+  void _showSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Wajib klik tombol buat tutup
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Icon Centang
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade100,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.check_rounded,
+                    color: Colors.green,
+                    size: 40,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "Pembayaran Sukses!",
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  "Terima kasih, uang kas kamu sudah tercatat di sistem.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 14),
+                ),
+                const SizedBox(height: 24),
+                // Tombol Kembali
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).pop(); // Tutup Dialog
+                      Navigator.of(context).pop(true); // Kembali ke Home
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4C6EF5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text(
+                      "Kembali ke Homepage",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
-  // --- LOGIC KIRIM KE SUPABASE ---
+  // --- LOGIC KIRIM PEMBAYARAN ---
   Future<void> _submitPayment() async {
-    // 1. Validasi Input
-    if (_amountController.text.isEmpty || _noteController.text.isEmpty) {
+    // 1. TENTUKAN JUDUL & KATEGORI
+    String finalTitle = "";
+    String finalCategory = "Uang Kas";
+
+    if (_selectedCategory == "Lainnya") {
+      if (_customNoteController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Harap isi keterangan untuk 'Lainnya'"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      finalTitle = _customNoteController.text.trim();
+      finalCategory = "Umum";
+    } else {
+      finalTitle = _selectedCategory;
+      finalCategory = _selectedCategory;
+    }
+
+    // 2. VALIDASI NOMINAL
+    if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Harap isi nominal dan keterangan"),
+          content: Text("Harap isi nominal pembayaran"),
           backgroundColor: Colors.red,
         ),
       );
@@ -49,42 +152,56 @@ class _KasScreenState extends State<KasScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // PENTING: Hapus titik sebelum kirim ke database (10.000 -> 10000)
+      final user = _supabase.auth.currentUser;
+      if (user == null) throw "User tidak terdeteksi. Silakan login ulang.";
+
+      // Ambil Nama User
+      final userProfile = await _supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+      String myName = userProfile['full_name'] ?? 'Tanpa Nama';
+
+      // Bersihkan Format Uang
       final String cleanAmount = _amountController.text.replaceAll('.', '');
       final int amount = int.parse(cleanAmount);
-      final String note = _noteController.text;
 
-      // 2. Insert ke Tabel 'kas_transactions'
+      // 3. INSERT DATABASE
       await _supabase.from('kas_transactions').insert({
-        'title': note,
+        'user_id': user.id,
+        'payer_name': myName,
+        'title': finalTitle,
         'amount': amount,
-        'type': 'IN', // Pemasukan
-        'category': 'Uang Kas',
-        'created_at': DateTime.now().toIso8601String(),
+        'type': 'IN',
+        'category': finalCategory,
+        'created_at': DateTime.now()
+            .toUtc()
+            .toIso8601String(), // Wajib UTC biar jam gak ngaco
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Pembayaran Berhasil Disimpan!"),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.pop(context, true);
+        // TAMPILKAN POPUP SUKSES
+        _showSuccessDialog();
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  String _formatNumber(int number) {
+    final formatter = NumberFormat.decimalPattern('id');
+    return formatter.format(number);
+  }
+
   void _selectQuickAmount(int amount) {
-    // Set text dengan format titik
     _amountController.text = _formatNumber(amount);
-    // Pindahkan kursor ke paling belakang biar enak
     _amountController.selection = TextSelection.fromPosition(
       TextPosition(offset: _amountController.text.length),
     );
@@ -114,6 +231,7 @@ class _KasScreenState extends State<KasScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // --- 1. INPUT NOMINAL ---
             const Text(
               "Mau bayar berapa hari ini?",
               style: TextStyle(
@@ -123,8 +241,6 @@ class _KasScreenState extends State<KasScreen> {
               ),
             ),
             const SizedBox(height: 12),
-
-            // --- INPUT NOMINAL BESAR ---
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
@@ -162,11 +278,9 @@ class _KasScreenState extends State<KasScreen> {
                         hintText: "0",
                         border: InputBorder.none,
                       ),
-                      // --- LOGIC FORMATTER DISINI ---
                       inputFormatters: [
-                        FilteringTextInputFormatter
-                            .digitsOnly, // Cuma boleh angka
-                        CurrencyInputFormatter(), // Formatter Custom (Class di bawah)
+                        FilteringTextInputFormatter.digitsOnly,
+                        CurrencyInputFormatter(),
                       ],
                     ),
                   ),
@@ -175,8 +289,6 @@ class _KasScreenState extends State<KasScreen> {
             ),
 
             const SizedBox(height: 24),
-
-            // --- PILIHAN CEPAT (CHIPS) ---
             const Text(
               "Pilihan Cepat",
               style: TextStyle(fontWeight: FontWeight.bold),
@@ -186,7 +298,7 @@ class _KasScreenState extends State<KasScreen> {
               spacing: 10,
               children: _quickAmounts.map((amount) {
                 return ActionChip(
-                  label: Text("Rp ${amount ~/ 1000}rb"), // Tampilan: 20rb
+                  label: Text("Rp ${amount ~/ 1000}rb"),
                   backgroundColor: Colors.white,
                   surfaceTintColor: Colors.white,
                   shape: RoundedRectangleBorder(
@@ -200,25 +312,73 @@ class _KasScreenState extends State<KasScreen> {
 
             const SizedBox(height: 30),
 
-            // --- INPUT KETERANGAN ---
+            // --- 2. KATEGORI PEMBAYARAN ---
             const Text(
               "Untuk Pembayaran Apa?",
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _noteController,
-              decoration: InputDecoration(
-                hintText: "Contoh: Kas Januari, Denda Telat...",
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.all(20),
-              ),
+
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: _categories.map((category) {
+                bool isSelected = _selectedCategory == category;
+                return InkWell(
+                  onTap: () => setState(() => _selectedCategory = category),
+                  borderRadius: BorderRadius.circular(12),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected ? primaryBlue : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected ? primaryBlue : Colors.grey.shade300,
+                        width: isSelected ? 0 : 1.5,
+                      ),
+                      boxShadow: isSelected
+                          ? [
+                              BoxShadow(
+                                color: primaryBlue.withOpacity(0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ]
+                          : [],
+                    ),
+                    child: Text(
+                      category,
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.grey[700],
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
+
+            // --- 3. INPUT MANUAL (JIKA PILIH LAINNYA) ---
+            if (_selectedCategory == "Lainnya") ...[
+              const SizedBox(height: 20),
+              TextField(
+                controller: _customNoteController,
+                decoration: InputDecoration(
+                  hintText: "Tulis keterangan pembayaran...",
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.all(20),
+                ),
+              ),
+            ],
 
             const SizedBox(height: 40),
 
@@ -255,30 +415,18 @@ class _KasScreenState extends State<KasScreen> {
   }
 }
 
-// --- CLASS FORMATTER UANG (TITIK OTOMATIS) ---
+// FORMATTER UANG
 class CurrencyInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    // 1. Kalau kosong, biarin kosong
-    if (newValue.text.isEmpty) {
-      return newValue.copyWith(text: '');
-    }
-
-    // 2. Bersihkan input (hanya angka)
-    // Cegah user copas huruf/simbol
+    if (newValue.text.isEmpty) return newValue.copyWith(text: '');
     String newText = newValue.text.replaceAll(RegExp('[^0-9]'), '');
-
-    // 3. Parse ke integer
     int value = int.tryParse(newText) ?? 0;
-
-    // 4. Format balik jadi String pakai Titik (Locale ID)
     final formatter = NumberFormat.decimalPattern('id');
     String newString = formatter.format(value);
-
-    // 5. Kembalikan text baru dengan posisi kursor di ujung
     return newValue.copyWith(
       text: newString,
       selection: TextSelection.collapsed(offset: newString.length),

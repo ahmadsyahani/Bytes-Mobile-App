@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Tambahan Import
 
+// IMPORT SCREENS
 import 'screens/login_screen.dart';
-import 'screens/homepage.dart';
+import 'screens/homepage.dart'; // Pastikan nama file ini sesuai (home_screen.dart atau homepage.dart)
+import 'screens/onboarding_screen.dart'; // Tambahan Import
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,10 +36,71 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'MonaSans',
       ),
-      // Cek sesi login
-      home: Supabase.instance.client.auth.currentUser == null
-          ? const LoginScreen()
-          : const HomeScreen(),
+      // Arahkan ke Widget Pengecekan (Satpam)
+      home: const AuthCheck(),
     );
+  }
+}
+
+// --- WIDGET LOGIC PENGECEKAN (SATPAM) ---
+class AuthCheck extends StatefulWidget {
+  const AuthCheck({super.key});
+
+  @override
+  State<AuthCheck> createState() => _AuthCheckState();
+}
+
+class _AuthCheckState extends State<AuthCheck> {
+  bool _isLoading = true;
+  bool _hasSeenOnboarding = false;
+  bool _isLoggedIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkStatus();
+  }
+
+  Future<void> _checkStatus() async {
+    // 1. Cek apakah sudah pernah lihat Onboarding (Shared Preferences)
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getBool('has_seen_onboarding') ?? false;
+
+    // 2. Cek apakah user sedang Login (Supabase)
+    final session = Supabase.instance.client.auth.currentSession;
+
+    if (mounted) {
+      setState(() {
+        _hasSeenOnboarding = seen;
+        _isLoggedIn = session != null;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Tampilkan Loading putih bersih saat sedang mengecek
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // --- LOGIC PERCABANGAN UTAMA ---
+
+    // 1. Kalau belum pernah liat Onboarding -> Ke Onboarding Screen
+    if (!_hasSeenOnboarding) {
+      return const OnboardingScreen();
+    }
+
+    // 2. Kalau sudah Onboarding & Sudah Login -> Ke Home
+    if (_isLoggedIn) {
+      return const HomeScreen();
+    }
+
+    // 3. Kalau sudah Onboarding tapi Belum Login -> Ke Login
+    return const LoginScreen();
   }
 }

@@ -16,7 +16,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final ImagePicker _picker = ImagePicker();
   bool _isUploading = false;
 
-  // --- HELPER FORMAT TANGGAL ---
   String _formatDate(String? dateString) {
     if (dateString == null || dateString.isEmpty) return "Belum Diatur";
     try {
@@ -43,18 +42,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // --- LOGIC DATABASE ---
   Future<void> _updatePhoto(ImageSource source) async {
-    final XFile? image = await _picker.pickImage(
-      source: source,
-      imageQuality: 50,
-    );
-    if (image == null) return;
-    setState(() => _isUploading = true);
     try {
+      final XFile? image = await _picker.pickImage(
+        source: source,
+        imageQuality: 50,
+      );
+      if (image == null) return;
+
+      setState(() => _isUploading = true);
+
       final userId = _supabase.auth.currentUser!.id;
       final fileExt = image.path.split('.').last;
       final fileName =
           '$userId-${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-      final filePath = '/$fileName';
+      final filePath = fileName;
+
       await _supabase.storage
           .from('profile_photos')
           .upload(
@@ -62,13 +64,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
             File(image.path),
             fileOptions: const FileOptions(upsert: true),
           );
+
       final imageUrl = _supabase.storage
           .from('profile_photos')
           .getPublicUrl(filePath);
+
+      // Tambah timestamp biar gambar langsung berubah (bypass cache)
       await _supabase
           .from('profiles')
-          .update({'photo_url': imageUrl})
+          .update({
+            'photo_url': "$imageUrl?t=${DateTime.now().millisecondsSinceEpoch}",
+          })
           .eq('id', userId);
+
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -79,13 +87,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Gagal upload: $e"),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red),
         );
     } finally {
-      setState(() => _isUploading = false);
+      if (mounted) setState(() => _isUploading = false);
     }
   }
 
@@ -101,13 +106,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         controller: controller,
         onSave: () async {
           if (controller.text.isNotEmpty) {
-            final userId = _supabase.auth.currentUser!.id;
-            await _supabase
-                .from('profiles')
-                .update({'nickname': controller.text.trim()})
-                .eq('id', userId);
-            if (mounted) Navigator.pop(context);
-            setState(() {});
+            try {
+              final userId = _supabase.auth.currentUser!.id;
+              await _supabase
+                  .from('profiles')
+                  .update({'nickname': controller.text.trim()})
+                  .eq('id', userId);
+              if (mounted) Navigator.pop(context);
+            } catch (e) {
+              // Handle error
+            }
           }
         },
       ),
@@ -133,7 +141,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 .update({'phone': controller.text.trim()})
                 .eq('id', userId);
             if (mounted) Navigator.pop(context);
-            setState(() {});
           }
         },
       ),
@@ -147,7 +154,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         .update({'gender': genderCode})
         .eq('id', userId);
     if (mounted) Navigator.pop(context);
-    setState(() {});
   }
 
   Future<void> _editGender() async {
@@ -287,7 +293,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   .update({'birth_date': formattedDB})
                   .eq('id', userId);
               if (mounted) Navigator.pop(context);
-              setState(() {});
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF4C6EF5),
@@ -319,26 +324,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final Color primaryBlue = const Color(0xFF4C6EF5);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF9F8F4),
-      extendBodyBehindAppBar:
-          true, // PENTING: Biar AppBar ngambang di atas background
+      backgroundColor: const Color(0xFFF9F8F4), // Warna Background Putih Tulang
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        backgroundColor:
-            Colors.transparent, // Transparan biar background biru kelihatan
+        backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back,
-            color: Colors.white,
-          ), // Tombol Back Putih
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
           "My Profile",
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ), // Judul Putih
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
@@ -388,140 +385,145 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           return Stack(
             children: [
-              // --- LAYER 1: FIXED BACKGROUND (BIRU) ---
+              // --- LAYER 1: FIXED BACKGROUND (BIRU DI BELAKANG) ---
+              // Ini cuma warna doang, gak ada kontennya biar gak ganggu klik
               Container(
-                height: 420, // Tinggi area biru
+                height: 450, // Tinggi area biru
                 width: double.infinity,
                 decoration: BoxDecoration(color: primaryBlue),
-                child: SafeArea(
-                  // Biar konten gak ketutup poni HP
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 50), // Jarak dari AppBar
-                      // FOTO PROFIL
-                      Stack(
-                        alignment: Alignment.bottomRight,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                            ),
-                            child: CircleAvatar(
-                              radius: 55,
-                              backgroundColor: Colors.grey[200],
-                              backgroundImage: photoUrl != null
-                                  ? NetworkImage(photoUrl)
-                                  : null,
-                              child: photoUrl == null
-                                  ? Icon(
-                                      Icons.person,
-                                      size: 55,
-                                      color: Colors.grey[400],
-                                    )
-                                  : null,
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: _showImageSourceModal,
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF212121),
-                                shape: BoxShape.circle,
-                              ),
-                              child: _isUploading
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(
-                                      Icons.camera_alt,
-                                      color: Colors.white,
-                                      size: 16,
-                                    ),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // NAMA & EDIT ICON
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            displayName,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () => _editNickname(nickname),
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.edit,
-                                size: 14,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      // ROLE BADGE
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          role.toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ),
 
-              // --- LAYER 2: SCROLLABLE WHITE CARD ---
+              // --- LAYER 2: SCROLLABLE CONTENT (SEMUA MASUK SINI) ---
+              // Konten Foto & Nama dimasukkan ke dalam ScrollView biar ikut naik dan BISA DIKLIK
               SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 child: Column(
                   children: [
-                    // Memberi jarak transparan agar header biru terlihat
-                    const SizedBox(height: 360),
+                    // SPACER BUAT APPBAR (Biar gak ketutup tombol back)
+                    const SizedBox(height: 100),
 
-                    // KONTAINER PUTIH (CARD)
+                    // --- HEADER SECTION (Foto, Nama, Role) ---
+                    // Ini sekarang jadi bagian dari Scroll, jadi interaktif
+                    Center(
+                      child: Column(
+                        children: [
+                          // FOTO PROFIL
+                          Stack(
+                            alignment: Alignment.bottomRight,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: CircleAvatar(
+                                  radius: 55,
+                                  backgroundColor: Colors.grey[200],
+                                  backgroundImage: photoUrl != null
+                                      ? NetworkImage(photoUrl)
+                                      : null,
+                                  child: photoUrl == null
+                                      ? Icon(
+                                          Icons.person,
+                                          size: 55,
+                                          color: Colors.grey[400],
+                                        )
+                                      : null,
+                                ),
+                              ),
+                              // TOMBOL KAMERA (PASTI BISA DIKLIK)
+                              GestureDetector(
+                                onTap: _showImageSourceModal,
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF212121),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: _isUploading
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.camera_alt,
+                                          color: Colors.white,
+                                          size: 16,
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+
+                          // NAMA & EDIT ICON
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                displayName,
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              GestureDetector(
+                                onTap: () => _editNickname(nickname),
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(
+                                    Icons.edit,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+
+                          // ROLE BADGE
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              role.toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 30),
+
+                    // --- CARD PUTIH (DATA USER) ---
                     Container(
                       width: double.infinity,
                       decoration: const BoxDecoration(
-                        color: Color(0xFFF9F8F4), // Background agak abu
+                        color: Color(0xFFF9F8F4),
                         borderRadius: BorderRadius.only(
                           topLeft: Radius.circular(30),
                           topRight: Radius.circular(30),
@@ -533,7 +535,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       child: Column(
                         children: [
-                          // LIST DATA
                           _buildInfoCard(
                             title: "NRP",
                             value: nrp,
@@ -541,7 +542,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             primaryBlue: primaryBlue,
                           ),
                           const SizedBox(height: 16),
-
                           GestureDetector(
                             onTap: () => _editPhone(phone),
                             child: _buildInfoCard(
@@ -553,7 +553,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-
                           _buildInfoCard(
                             title: "Email",
                             value: email,
@@ -561,7 +560,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             primaryBlue: primaryBlue,
                           ),
                           const SizedBox(height: 16),
-
                           GestureDetector(
                             onTap: isBirthDateSet
                                 ? () => ScaffoldMessenger.of(context)
@@ -585,7 +583,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-
                           GestureDetector(
                             onTap: isGenderSet
                                 ? () => ScaffoldMessenger.of(context)
@@ -613,7 +610,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-
                           _buildInfoCard(
                             title: "Status Akademik",
                             value: "Mahasiswa Aktif",
@@ -621,10 +617,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             primaryBlue: Colors.green,
                             isStatus: true,
                           ),
-
                           const SizedBox(height: 40),
-
-                          // LOGOUT BUTTON
                           SizedBox(
                             width: double.infinity,
                             height: 55,
@@ -658,7 +651,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                           ),
-
                           const SizedBox(height: 50),
                         ],
                       ),
@@ -674,7 +666,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // --- HELPER WIDGETS ---
-
   Widget _buildInfoCard({
     required String title,
     required String value,

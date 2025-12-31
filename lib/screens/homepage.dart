@@ -16,9 +16,9 @@ import 'materi_screen.dart';
 import 'tugas_screen.dart';
 import 'jadwal_screen.dart';
 import 'kas_screen.dart';
-import 'cek_kas_screen.dart';
+import 'cek_kas_screen.dart'; // Pastikan ini ada
 import 'profile_screen.dart';
-import 'classmate_screen.dart'; // Jangan lupa import teman sekelas
+// import 'classmate_screen.dart'; // Gak perlu di import di sini kalau cuma ada di Navbar
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -294,15 +294,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // MENU 1: TEMAN (Ganti Cek Kas jadi Teman biar balance)
+                        // MENU 1: CEK KAS (BALIK LAGI)
                         MenuButton(
-                          icon: Icons.people_alt_rounded,
-                          label: "Teman",
+                          icon: Icons.account_balance_wallet_rounded,
+                          label: "Cek Kas",
                           color: primaryBlue,
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const ClassmateScreen(),
+                              builder: (context) => const CekKasScreen(),
                             ),
                           ),
                         ),
