@@ -113,7 +113,7 @@ class _KasScreenState extends State<KasScreen> {
     if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Isi nominal dulu bro"),
+          content: Text("Isi nominal dulu yaa"),
           backgroundColor: Colors.red,
         ),
       );

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:fluttertoast/fluttertoast.dart'; // 1. JANGAN LUPA IMPORT INI
 import 'login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -14,7 +15,130 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final _supabase = Supabase.instance.client;
   final ImagePicker _picker = ImagePicker();
+
+  // 1. INISIALISASI VARIABEL FTOAST
+  late FToast fToast;
+
   bool _isUploading = false;
+  bool _isLoadingData = true;
+
+  // --- VARIABLE LOKAL ---
+  String _fullName = "Mahasiswa";
+  String _nickname = "";
+  String _nrp = "...";
+  String _email = "...";
+  String _phone = "-";
+  String _role = "member";
+  String? _photoUrl;
+  String _gender = "-";
+  String _birthDateDisplay = "Belum Diatur";
+  bool _isGenderSet = false;
+  bool _isBirthDateSet = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 2. SETUP FTOAST DI INITSTATE
+    fToast = FToast();
+    fToast.init(context);
+
+    _fetchProfileData();
+  }
+
+  // --- 3. FUNGSI TOAST CUSTOM (FIXED & AMAN) ---
+  void _showCustomToast(String message, {bool isError = false}) {
+    // Tentukan Warna Background
+    final Color bgColor = isError
+        ? const Color(0xFFFF5252)
+        : const Color(0xFF4C6EF5);
+    final IconData icon = isError
+        ? Icons.cancel_rounded
+        : Icons.check_circle_rounded;
+
+    Widget toast = Container(
+      // TRIK POSISI: Margin bawah biar "melayang" di atas, gak nempel dasar layar
+      margin: const EdgeInsets.only(bottom: 80),
+
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30), // Bentuk Kapsul
+        color: bgColor,
+        boxShadow: [
+          BoxShadow(
+            color: bgColor.withOpacity(0.4),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min, // Biar lebarnya menyesuaikan teks
+        children: [
+          Icon(icon, color: Colors.white, size: 22),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                // fontFamily: 'MonaSans', // Aktifkan kalau font custom udah dipasang
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    // Tampilkan Toast (Pake Gravity BOTTOM biasa, posisi diatur margin container)
+    fToast.showToast(
+      child: toast,
+      gravity: ToastGravity.BOTTOM,
+      toastDuration: const Duration(seconds: 2),
+    );
+  }
+
+  Future<void> _fetchProfileData() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
+
+      if (mounted) {
+        setState(() {
+          _fullName = data['full_name'] ?? "Mahasiswa";
+          _nickname = data['nickname'] ?? "";
+          _nrp = data['nrp'] ?? "-";
+          _email = data['email'] ?? "-";
+          _phone = data['phone'] ?? "-";
+          _role = data['role'] ?? "member";
+          _photoUrl = data['photo_url'];
+
+          if (data['birth_date'] != null && data['birth_date'] != "") {
+            _isBirthDateSet = true;
+            _birthDateDisplay = _formatDate(data['birth_date']);
+          }
+
+          final gCode = data['gender'];
+          if (gCode != null && gCode != "") {
+            _isGenderSet = true;
+            _gender = (gCode == 'L') ? "Laki-laki" : "Perempuan";
+          } else {
+            _gender = "Belum Diatur";
+          }
+
+          _isLoadingData = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingData = false);
+    }
+  }
 
   String _formatDate(String? dateString) {
     if (dateString == null || dateString.isEmpty) return "Belum Diatur";
@@ -40,7 +164,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // --- LOGIC DATABASE ---
+  // --- LOGIC UPDATE DENGAN CUSTOM TOAST ---
+
   Future<void> _updatePhoto(ImageSource source) async {
     try {
       final XFile? image = await _picker.pickImage(
@@ -55,42 +180,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final fileExt = image.path.split('.').last;
       final fileName =
           '$userId-${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-      final filePath = fileName;
 
       await _supabase.storage
           .from('profile_photos')
           .upload(
-            filePath,
+            fileName,
             File(image.path),
             fileOptions: const FileOptions(upsert: true),
           );
 
-      final imageUrl = _supabase.storage
+      final newUrl = _supabase.storage
           .from('profile_photos')
-          .getPublicUrl(filePath);
+          .getPublicUrl(fileName);
+      final urlWithTimestamp =
+          "$newUrl?t=${DateTime.now().millisecondsSinceEpoch}";
 
-      // Tambah timestamp biar gambar langsung berubah (bypass cache)
       await _supabase
           .from('profiles')
-          .update({
-            'photo_url': "$imageUrl?t=${DateTime.now().millisecondsSinceEpoch}",
-          })
+          .update({'photo_url': urlWithTimestamp})
           .eq('id', userId);
 
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Foto berhasil diupdate!"),
-            backgroundColor: Colors.green,
-          ),
-        );
+      if (mounted) {
+        setState(() {
+          _photoUrl = urlWithTimestamp;
+          _isUploading = false;
+        });
+        _showCustomToast("Foto Profil Berhasil Diganti!");
+      }
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red),
-        );
-    } finally {
-      if (mounted) setState(() => _isUploading = false);
+      if (mounted) {
+        setState(() => _isUploading = false);
+        _showCustomToast("Gagal upload foto: $e", isError: true);
+      }
     }
   }
 
@@ -106,16 +227,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
         controller: controller,
         onSave: () async {
           if (controller.text.isNotEmpty) {
-            try {
-              final userId = _supabase.auth.currentUser!.id;
-              await _supabase
-                  .from('profiles')
-                  .update({'nickname': controller.text.trim()})
-                  .eq('id', userId);
-              if (mounted) Navigator.pop(context);
-            } catch (e) {
-              // Handle error
-            }
+            final newVal = controller.text.trim();
+            final userId = _supabase.auth.currentUser!.id;
+
+            Navigator.pop(context);
+
+            setState(() => _nickname = newVal);
+
+            _showCustomToast("Nama berhasil diubah!");
+
+            await _supabase
+                .from('profiles')
+                .update({'nickname': newVal})
+                .eq('id', userId);
           }
         },
       ),
@@ -130,30 +254,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
       context: context,
       builder: (context) => _buildEditDialog(
         title: "Ganti Nomor HP",
-        hint: "Contoh: 08123456789",
+        hint: "Contoh: 0812...",
         controller: controller,
         inputType: TextInputType.phone,
         onSave: () async {
           if (controller.text.isNotEmpty) {
+            final newVal = controller.text.trim();
             final userId = _supabase.auth.currentUser!.id;
+
+            Navigator.pop(context);
+
+            setState(() => _phone = newVal);
+
+            _showCustomToast("Nomor HP berhasil disimpan!");
+
             await _supabase
                 .from('profiles')
-                .update({'phone': controller.text.trim()})
+                .update({'phone': newVal})
                 .eq('id', userId);
-            if (mounted) Navigator.pop(context);
           }
         },
       ),
     );
   }
 
-  Future<void> _updateGenderDB(String genderCode) async {
+  Future<void> _updateGenderLogic(String code) async {
     final userId = _supabase.auth.currentUser!.id;
-    await _supabase
-        .from('profiles')
-        .update({'gender': genderCode})
-        .eq('id', userId);
-    if (mounted) Navigator.pop(context);
+
+    setState(() {
+      _isGenderSet = true;
+      _gender = (code == 'L') ? "Laki-laki" : "Perempuan";
+    });
+
+    _showCustomToast("Jenis kelamin disimpan!");
+
+    await _supabase.from('profiles').update({'gender': code}).eq('id', userId);
   }
 
   Future<void> _editGender() async {
@@ -176,58 +311,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 children: [
                   Expanded(
                     child: GestureDetector(
-                      onTap: () => _updateGenderDB('L'),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE3F2FD),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.blue.withOpacity(0.3),
-                          ),
-                        ),
-                        child: const Column(
-                          children: [
-                            Icon(Icons.male, size: 40, color: Colors.blue),
-                            SizedBox(height: 8),
-                            Text(
-                              "Laki-laki",
-                              style: TextStyle(
-                                color: Colors.blue,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _updateGenderLogic('L');
+                      },
+                      child: _buildGenderOption(
+                        Icons.male,
+                        "Laki-laki",
+                        Colors.blue,
+                        const Color(0xFFE3F2FD),
                       ),
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: GestureDetector(
-                      onTap: () => _updateGenderDB('P'),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFCE4EC),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.pink.withOpacity(0.3),
-                          ),
-                        ),
-                        child: const Column(
-                          children: [
-                            Icon(Icons.female, size: 40, color: Colors.pink),
-                            SizedBox(height: 8),
-                            Text(
-                              "Perempuan",
-                              style: TextStyle(
-                                color: Colors.pink,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _updateGenderLogic('P');
+                      },
+                      child: _buildGenderOption(
+                        Icons.female,
+                        "Perempuan",
+                        Colors.pink,
+                        const Color(0xFFFCE4EC),
                       ),
                     ),
                   ),
@@ -244,6 +351,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildGenderOption(
+    IconData icon,
+    String label,
+    Color color,
+    Color bg,
+  ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 40, color: color),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }
@@ -268,6 +401,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     String formattedDB =
         "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
     String displayDate = "${date.day}/${date.month}/${date.year}";
+
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -288,11 +422,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ElevatedButton(
             onPressed: () async {
               final userId = _supabase.auth.currentUser!.id;
+              Navigator.pop(context);
+
+              setState(() {
+                _isBirthDateSet = true;
+                _birthDateDisplay = _formatDate(formattedDB);
+              });
+
+              _showCustomToast("Tanggal lahir disimpan!");
+
               await _supabase
                   .from('profiles')
                   .update({'birth_date': formattedDB})
                   .eq('id', userId);
-              if (mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF4C6EF5),
@@ -317,355 +459,283 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
   }
 
-  // --- UI UTAMA ---
+  void _showLockedMsg() {
+    _showCustomToast("Data ini tidak bisa diubah lagi", isError: true);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final userId = _supabase.auth.currentUser!.id;
     final Color primaryBlue = const Color(0xFF4C6EF5);
+    String displayName = _nickname.isNotEmpty ? _nickname : _fullName;
+
+    if (_isLoadingData) {
+      return const Scaffold(
+        backgroundColor: Color(0xFFF9F8F4),
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF9F8F4), // Warna Background Putih Tulang
+      backgroundColor: const Color(0xFFF9F8F4),
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            Navigator.pop(context, true);
+          },
         ),
         title: const Text(
           "My Profile",
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
       ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _supabase
-            .from('profiles')
-            .stream(primaryKey: ['id'])
-            .eq('id', userId),
-        builder: (context, snapshot) {
-          String fullName = "Mahasiswa";
-          String nickname = "";
-          String nrp = "...";
-          String email = "...";
-          String phone = "-";
-          String role = "member";
-          String? photoUrl;
-          String gender = "-";
-          String birthDateDisplay = "...";
-          bool isGenderSet = false;
-          bool isBirthDateSet = false;
-
-          if (snapshot.hasData && snapshot.data!.isNotEmpty) {
-            final data = snapshot.data!.first;
-            fullName = data['full_name'] ?? "Mahasiswa";
-            nickname = data['nickname'] ?? "";
-            nrp = data['nrp'] ?? "-";
-            email = data['email'] ?? "-";
-            phone = data['phone'] ?? "-";
-            role = data['role'] ?? "member";
-            photoUrl = data['photo_url'];
-
-            if (data['birth_date'] != null && data['birth_date'] != "") {
-              isBirthDateSet = true;
-              birthDateDisplay = _formatDate(data['birth_date']);
-            } else {
-              birthDateDisplay = "Belum Diatur";
-            }
-
-            final gCode = data['gender'];
-            if (gCode != null && gCode != "") {
-              isGenderSet = true;
-              gender = (gCode == 'L') ? "Laki-laki" : "Perempuan";
-            } else {
-              gender = "Belum Diatur";
-            }
-          }
-          String displayName = nickname.isNotEmpty ? nickname : fullName;
-
-          return Stack(
-            children: [
-              // --- LAYER 1: FIXED BACKGROUND (BIRU DI BELAKANG) ---
-              // Ini cuma warna doang, gak ada kontennya biar gak ganggu klik
-              Container(
-                height: 450, // Tinggi area biru
-                width: double.infinity,
-                decoration: BoxDecoration(color: primaryBlue),
-              ),
-
-              // --- LAYER 2: SCROLLABLE CONTENT (SEMUA MASUK SINI) ---
-              // Konten Foto & Nama dimasukkan ke dalam ScrollView biar ikut naik dan BISA DIKLIK
-              SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                child: Column(
-                  children: [
-                    // SPACER BUAT APPBAR (Biar gak ketutup tombol back)
-                    const SizedBox(height: 100),
-
-                    // --- HEADER SECTION (Foto, Nama, Role) ---
-                    // Ini sekarang jadi bagian dari Scroll, jadi interaktif
-                    Center(
-                      child: Column(
+      body: Stack(
+        children: [
+          Container(
+            height: 450,
+            width: double.infinity,
+            decoration: BoxDecoration(color: primaryBlue),
+          ),
+          SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Column(
+              children: [
+                const SizedBox(height: 100),
+                Center(
+                  child: Column(
+                    children: [
+                      Stack(
+                        alignment: Alignment.bottomRight,
                         children: [
-                          // FOTO PROFIL
-                          Stack(
-                            alignment: Alignment.bottomRight,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: const BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: CircleAvatar(
-                                  radius: 55,
-                                  backgroundColor: Colors.grey[200],
-                                  backgroundImage: photoUrl != null
-                                      ? NetworkImage(photoUrl)
-                                      : null,
-                                  child: photoUrl == null
-                                      ? Icon(
-                                          Icons.person,
-                                          size: 55,
-                                          color: Colors.grey[400],
-                                        )
-                                      : null,
-                                ),
-                              ),
-                              // TOMBOL KAMERA (PASTI BISA DIKLIK)
-                              GestureDetector(
-                                onTap: _showImageSourceModal,
-                                child: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF212121),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: _isUploading
-                                      ? const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            color: Colors.white,
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.camera_alt,
-                                          color: Colors.white,
-                                          size: 16,
-                                        ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-
-                          // NAMA & EDIT ICON
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                displayName,
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () => _editNickname(nickname),
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Icon(
-                                    Icons.edit,
-                                    size: 14,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-
-                          // ROLE BADGE
                           Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 6,
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
                             ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(20),
+                            child: CircleAvatar(
+                              radius: 55,
+                              backgroundColor: Colors.grey[200],
+                              backgroundImage: _photoUrl != null
+                                  ? NetworkImage(_photoUrl!)
+                                  : null,
+                              child: _photoUrl == null
+                                  ? Icon(
+                                      Icons.person,
+                                      size: 55,
+                                      color: Colors.grey[400],
+                                    )
+                                  : null,
                             ),
-                            child: Text(
-                              role.toUpperCase(),
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
+                          ),
+                          GestureDetector(
+                            onTap: _showImageSourceModal,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF212121),
+                                shape: BoxShape.circle,
+                              ),
+                              child: _isUploading
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.camera_alt,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            displayName,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => _editNickname(_nickname),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.edit,
+                                size: 14,
                                 color: Colors.white,
-                                letterSpacing: 1,
                               ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-
-                    const SizedBox(height: 30),
-
-                    // --- CARD PUTIH (DATA USER) ---
-                    Container(
-                      width: double.infinity,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFF9F8F4),
-                        borderRadius: BorderRadius.only(
-                          topLeft: Radius.circular(30),
-                          topRight: Radius.circular(30),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          _role.toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 1,
+                          ),
                         ),
                       ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 30,
-                      ),
-                      child: Column(
-                        children: [
-                          _buildInfoCard(
-                            title: "NRP",
-                            value: nrp,
-                            icon: Icons.badge_outlined,
-                            primaryBlue: primaryBlue,
-                          ),
-                          const SizedBox(height: 16),
-                          GestureDetector(
-                            onTap: () => _editPhone(phone),
-                            child: _buildInfoCard(
-                              title: "WhatsApp / No HP",
-                              value: phone,
-                              icon: Icons.phone_android_rounded,
-                              primaryBlue: primaryBlue,
-                              showEditIcon: true,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildInfoCard(
-                            title: "Email",
-                            value: email,
-                            icon: Icons.email_outlined,
-                            primaryBlue: primaryBlue,
-                          ),
-                          const SizedBox(height: 16),
-                          GestureDetector(
-                            onTap: isBirthDateSet
-                                ? () => ScaffoldMessenger.of(context)
-                                      .showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            "Tidak dapat diubah lagi.",
-                                          ),
-                                          backgroundColor: Colors.orange,
-                                        ),
-                                      )
-                                : _pickBirthDate,
-                            child: _buildInfoCard(
-                              title: "Tanggal Lahir",
-                              value: birthDateDisplay,
-                              icon: Icons.cake_outlined,
-                              primaryBlue: isBirthDateSet
-                                  ? primaryBlue
-                                  : Colors.grey,
-                              showEditIcon: !isBirthDateSet,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          GestureDetector(
-                            onTap: isGenderSet
-                                ? () => ScaffoldMessenger.of(context)
-                                      .showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            "Tidak dapat diubah lagi.",
-                                          ),
-                                          backgroundColor: Colors.orange,
-                                        ),
-                                      )
-                                : _editGender,
-                            child: _buildInfoCard(
-                              title: "Jenis Kelamin",
-                              value: gender,
-                              icon: gender == "Perempuan"
-                                  ? Icons.female
-                                  : Icons.male,
-                              primaryBlue: isGenderSet
-                                  ? (gender == "Perempuan"
-                                        ? Colors.pink
-                                        : Colors.blue)
-                                  : Colors.grey,
-                              showEditIcon: !isGenderSet,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildInfoCard(
-                            title: "Status Akademik",
-                            value: "Mahasiswa Aktif",
-                            icon: Icons.check_circle_outline,
-                            primaryBlue: Colors.green,
-                            isStatus: true,
-                          ),
-                          const SizedBox(height: 40),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 55,
-                            child: OutlinedButton(
-                              onPressed: _handleLogout,
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(
-                                  color: Color(0xFFFF5252),
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                backgroundColor: const Color(
-                                  0xFFFF5252,
-                                ).withOpacity(0.05),
-                              ),
-                              child: const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.logout, color: Color(0xFFFF5252)),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    "Log Out",
-                                    style: TextStyle(
-                                      color: Color(0xFFFF5252),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 50),
-                        ],
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          );
-        },
+                const SizedBox(height: 30),
+                Container(
+                  width: double.infinity,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF9F8F4),
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(30),
+                      topRight: Radius.circular(30),
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 30,
+                  ),
+                  child: Column(
+                    children: [
+                      _buildInfoCard(
+                        title: "NRP",
+                        value: _nrp,
+                        icon: Icons.badge_outlined,
+                        primaryBlue: primaryBlue,
+                      ),
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: () => _editPhone(_phone),
+                        child: _buildInfoCard(
+                          title: "WhatsApp / No HP",
+                          value: _phone,
+                          icon: Icons.phone_android_rounded,
+                          primaryBlue: primaryBlue,
+                          showEditIcon: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildInfoCard(
+                        title: "Email",
+                        value: _email,
+                        icon: Icons.email_outlined,
+                        primaryBlue: primaryBlue,
+                      ),
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: _isBirthDateSet
+                            ? () => _showLockedMsg()
+                            : _pickBirthDate,
+                        child: _buildInfoCard(
+                          title: "Tanggal Lahir",
+                          value: _birthDateDisplay,
+                          icon: Icons.cake_outlined,
+                          primaryBlue: _isBirthDateSet
+                              ? primaryBlue
+                              : Colors.grey,
+                          showEditIcon: !_isBirthDateSet,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: _isGenderSet
+                            ? () => _showLockedMsg()
+                            : _editGender,
+                        child: _buildInfoCard(
+                          title: "Jenis Kelamin",
+                          value: _gender,
+                          icon: _gender == "Perempuan"
+                              ? Icons.female
+                              : Icons.male,
+                          primaryBlue: _isGenderSet
+                              ? (_gender == "Perempuan"
+                                    ? Colors.pink
+                                    : Colors.blue)
+                              : Colors.grey,
+                          showEditIcon: !_isGenderSet,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildInfoCard(
+                        title: "Status Akademik",
+                        value: "Mahasiswa Aktif",
+                        icon: Icons.check_circle_outline,
+                        primaryBlue: Colors.green,
+                        isStatus: true,
+                      ),
+                      const SizedBox(height: 40),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 55,
+                        child: OutlinedButton(
+                          onPressed: _handleLogout,
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFFFF5252)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            backgroundColor: const Color(
+                              0xFFFF5252,
+                            ).withOpacity(0.05),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.logout, color: Color(0xFFFF5252)),
+                              SizedBox(width: 8),
+                              Text(
+                                "Log Out",
+                                style: TextStyle(
+                                  color: Color(0xFFFF5252),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 50),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  // --- HELPER WIDGETS ---
   Widget _buildInfoCard({
     required String title,
     required String value,

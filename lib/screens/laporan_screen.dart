@@ -30,20 +30,20 @@ class _LaporanScreenState extends State<LaporanScreen> {
   @override
   void initState() {
     super.initState();
-    // Otomatis ambil data pas layar dibuka
-    _fetchPreviewData();
+    _fetchPreviewData(); // Ambil data saat pertama buka
   }
 
-  // --- 1. FUNGSI AMBIL DATA (Dipake buat Preview & Print) ---
+  // --- 1. FUNGSI AMBIL DATA DARI SUPABASE ---
   Future<void> _fetchPreviewData() async {
     setState(() {
       _isLoadingPreview = true;
-      _previewData = []; // Kosongkan dulu
+      _previewData = [];
       _previewMasuk = 0;
       _previewKeluar = 0;
     });
 
     try {
+      // Logic filter tanggal (Awal bulan s/d Akhir bulan)
       final startDate = DateTime(_selectedYear, _selectedMonth, 1);
       final endDate = DateTime(
         _selectedYear,
@@ -64,15 +64,16 @@ class _LaporanScreenState extends State<LaporanScreen> {
 
       final List<dynamic> data = response as List<dynamic>;
 
-      // Hitung Total buat Preview
+      // Hitung Total
       int tMasuk = 0;
       int tKeluar = 0;
 
       for (var item in data) {
-        if (item['type'] == 'IN')
+        if (item['type'] == 'IN') {
           tMasuk += (item['amount'] as int);
-        else
+        } else {
           tKeluar += (item['amount'] as int);
+        }
       }
 
       if (mounted) {
@@ -89,7 +90,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
     }
   }
 
-  // --- 2. LOGIC PRINT PDF (Pake data yang udah ditarik aja biar cepet) ---
+  // --- 2. LOGIC PRINT PDF (FIXED & PROFESSIONAL) ---
   Future<void> _generateAndPrintPdf() async {
     if (_previewData.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -106,108 +107,278 @@ class _LaporanScreenState extends State<LaporanScreen> {
     try {
       final pdf = pw.Document();
 
-      // Siapkan Data Tabel untuk PDF Library
+      // --- DEFINISI WARNA PDF (HARDCODE HEX) ---
+      final PdfColor primaryColor = PdfColor.fromInt(0xFF4C6EF5);
+      final PdfColor accentColor = PdfColor.fromInt(0xFFF0F4FF);
+      final PdfColor greyColor = PdfColors.grey600;
+      // Warna border transparan (Alpha 20% = 0x33)
+      final PdfColor lightBorderColor = PdfColor.fromInt(0x334C6EF5);
+
+      // Format Rupiah Helper
+      String toRupiah(int amount) {
+        return NumberFormat.currency(
+          locale: 'id_ID',
+          symbol: 'Rp ',
+          decimalDigits: 0,
+        ).format(amount);
+      }
+
+      // Siapkan Data Tabel
       final tableData = _previewData.map((t) {
         final date = DateFormat(
-          'dd/MM',
+          'dd/MM/yyyy',
         ).format(DateTime.parse(t['created_at']).toLocal());
         final title = t['title'] ?? '-';
-        final payer =
-            t['payer_name'] ??
-            '-'; // Bisa ganti logika mau nampilin nama/kategori
+        final payer = t['payer_name'] ?? '-';
         final type = t['type'];
+        final category = t['category'] ?? '-';
         final amount = t['amount'] ?? 0;
+
+        String description = type == 'IN'
+            ? "Pemasukan: $category"
+            : "Pengeluaran";
+        String mainName = type == 'IN' ? payer : title;
 
         return [
           date,
-          // Kalau ini pengeluaran, tampilin judulnya di kolom nama biar jelas
-          type == 'OUT' ? title : payer,
-          type == 'IN' ? title : (t['category'] ?? '-'),
-          type == 'IN' ? _formatRupiah(amount) : '-',
-          type == 'OUT' ? _formatRupiah(amount) : '-',
+          mainName,
+          description,
+          type == 'IN' ? toRupiah(amount) : '-',
+          type == 'OUT' ? toRupiah(amount) : '-',
         ];
       }).toList();
 
       pdf.addPage(
         pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
-          build: (pw.Context context) {
-            return [
-              pw.Header(
-                level: 0,
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      "Laporan Kas Kelas",
-                      style: pw.TextStyle(
-                        fontSize: 24,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.Text(
-                      "${_namaBulan(_selectedMonth)} $_selectedYear",
-                      style: const pw.TextStyle(
-                        fontSize: 18,
-                        color: PdfColors.grey,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              pw.SizedBox(height: 20),
-              pw.TableHelper.fromTextArray(
-                context: context,
-                headers: ['Tgl', 'Nama', 'Keterangan', 'Masuk', 'Keluar'],
-                data: tableData,
-                headerStyle: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  color: PdfColors.white,
-                ),
-                headerDecoration: const pw.BoxDecoration(color: PdfColors.blue),
-                rowDecoration: const pw.BoxDecoration(
-                  border: pw.Border(
-                    bottom: pw.BorderSide(color: PdfColors.grey300),
-                  ),
-                ),
-                cellAlignment: pw.Alignment.centerLeft,
-                cellAlignments: {
-                  3: pw.Alignment.centerRight,
-                  4: pw.Alignment.centerRight,
-                },
-              ),
-              pw.SizedBox(height: 20),
-              pw.Divider(),
+          pageTheme: pw.PageTheme(
+            pageFormat: PdfPageFormat.a4,
+            margin: const pw.EdgeInsets.all(40),
+            buildBackground: (context) =>
+                pw.FullPage(ignoreMargins: true, child: pw.Container()),
+          ),
+          header: (context) => pw.Column(
+            children: [
+              // Header Atas (Logo & Periode)
               pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.end,
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        "LAPORAN KAS KELAS",
+                        style: pw.TextStyle(
+                          fontSize: 20,
+                          fontWeight: pw.FontWeight.bold,
+                          color: primaryColor,
+                        ),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        "S.Tr Teknik Informatika B - PENS",
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          color: greyColor,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
                   pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.end,
                     children: [
                       pw.Text(
-                        "Total Pemasukan: ${_formatRupiah(_previewMasuk)}",
-                        style: const pw.TextStyle(color: PdfColors.green),
+                        "PERIODE",
+                        style: pw.TextStyle(fontSize: 10, color: greyColor),
                       ),
                       pw.Text(
-                        "Total Pengeluaran: ${_formatRupiah(_previewKeluar)}",
-                        style: const pw.TextStyle(color: PdfColors.red),
-                      ),
-                      pw.SizedBox(height: 5),
-                      pw.Text(
-                        "Sisa Saldo: ${_formatRupiah(_previewMasuk - _previewKeluar)}",
+                        "${_namaBulan(_selectedMonth).toUpperCase()} $_selectedYear",
                         style: pw.TextStyle(
-                          fontWeight: pw.FontWeight.bold,
                           fontSize: 14,
+                          fontWeight: pw.FontWeight.bold,
                         ),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        "Dicetak: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}",
+                        style: pw.TextStyle(fontSize: 9, color: greyColor),
                       ),
                     ],
                   ),
                 ],
               ),
               pw.SizedBox(height: 20),
-              pw.Text(
-                "Dicetak otomatis oleh Aplikasi Kas Kelas",
-                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+              pw.Divider(color: primaryColor, thickness: 2),
+              pw.SizedBox(height: 20),
+            ],
+          ),
+          footer: (context) => pw.Column(
+            children: [
+              pw.Divider(color: PdfColors.grey300),
+              pw.SizedBox(height: 10),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    "Bytes Mobile App",
+                    style: pw.TextStyle(fontSize: 10, color: greyColor),
+                  ),
+                  pw.Text(
+                    "Halaman ${context.pageNumber} dari ${context.pagesCount}",
+                    style: pw.TextStyle(fontSize: 10, color: greyColor),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          build: (pw.Context context) {
+            return [
+              // Tabel Data Modern (Tanpa Grid Vertikal)
+              pw.TableHelper.fromTextArray(
+                context: context,
+                headers: [
+                  'TANGGAL',
+                  'NAMA / JUDUL',
+                  'KATEGORI',
+                  'MASUK',
+                  'KELUAR',
+                ],
+                data: tableData,
+                border: null,
+                headerStyle: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.white,
+                  fontSize: 10,
+                ),
+                headerDecoration: pw.BoxDecoration(
+                  color: primaryColor,
+                  borderRadius: const pw.BorderRadius.vertical(
+                    top: pw.Radius.circular(4),
+                  ),
+                ),
+                rowDecoration: const pw.BoxDecoration(
+                  border: pw.Border(
+                    bottom: pw.BorderSide(color: PdfColors.grey200, width: 0.5),
+                  ),
+                ),
+                cellStyle: const pw.TextStyle(fontSize: 10),
+                cellPadding: const pw.EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                cellAlignments: {
+                  0: pw.Alignment.centerLeft,
+                  1: pw.Alignment.centerLeft,
+                  2: pw.Alignment.centerLeft,
+                  3: pw.Alignment.centerRight,
+                  4: pw.Alignment.centerRight,
+                },
+              ),
+
+              pw.SizedBox(height: 25),
+
+              // Summary Section (Total Box)
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.end,
+                children: [
+                  pw.Container(
+                    width: 250,
+                    padding: const pw.EdgeInsets.all(15),
+                    decoration: pw.BoxDecoration(
+                      color: accentColor,
+                      borderRadius: pw.BorderRadius.circular(8),
+                      // FIX: Pakai lightBorderColor (bukan .withOpacity)
+                      border: pw.Border.all(color: lightBorderColor),
+                    ),
+                    child: pw.Column(
+                      children: [
+                        pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text(
+                              "Total Pemasukan",
+                              style: const pw.TextStyle(fontSize: 10),
+                            ),
+                            pw.Text(
+                              toRupiah(_previewMasuk),
+                              style: const pw.TextStyle(
+                                fontSize: 10,
+                                color: PdfColors.green700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        pw.SizedBox(height: 5),
+                        pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text(
+                              "Total Pengeluaran",
+                              style: const pw.TextStyle(fontSize: 10),
+                            ),
+                            pw.Text(
+                              toRupiah(_previewKeluar),
+                              style: const pw.TextStyle(
+                                fontSize: 10,
+                                color: PdfColors.red700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        pw.Divider(color: PdfColors.grey400),
+                        pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text(
+                              "SISA SALDO",
+                              style: pw.TextStyle(
+                                fontSize: 12,
+                                fontWeight: pw.FontWeight.bold,
+                                color: primaryColor,
+                              ),
+                            ),
+                            pw.Text(
+                              toRupiah(_previewMasuk - _previewKeluar),
+                              style: pw.TextStyle(
+                                fontSize: 14,
+                                fontWeight: pw.FontWeight.bold,
+                                color: primaryColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              pw.SizedBox(height: 30),
+
+              // Kolom Tanda Tangan
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.SizedBox(),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.center,
+                    children: [
+                      pw.Text(
+                        "Surabaya, ${DateFormat('d MMMM yyyy', 'id_ID').format(DateTime.now())}",
+                        style: const pw.TextStyle(fontSize: 10),
+                      ),
+                      pw.SizedBox(height: 50),
+                      pw.Text(
+                        "( Bendahara Kelas )",
+                        style: pw.TextStyle(
+                          fontSize: 10,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ];
           },
@@ -219,24 +390,24 @@ class _LaporanScreenState extends State<LaporanScreen> {
         name: 'Laporan_Kas_${_namaBulan(_selectedMonth)}_$_selectedYear',
       );
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      }
     } finally {
       setState(() => _isGenerating = false);
     }
   }
 
+  // --- Helpers ---
   String _formatRupiah(int number) => NumberFormat.currency(
     locale: 'id_ID',
     symbol: 'Rp ',
     decimalDigits: 0,
   ).format(number);
-  String _formatCompact(int number) => NumberFormat.compactCurrency(
-    locale: 'id_ID',
-    symbol: '',
-  ).format(number); // Versi pendek buat preview mini
+  String _formatCompact(int number) =>
+      NumberFormat.compactCurrency(locale: 'id_ID', symbol: '').format(number);
 
   String _namaBulan(int month) {
     const months = [
@@ -256,6 +427,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
     return months[month - 1];
   }
 
+  // --- UI UTAMA ---
   @override
   Widget build(BuildContext context) {
     final Color primaryBlue = const Color(0xFF4C6EF5);
@@ -327,7 +499,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
                           ),
                           onChanged: (val) {
                             setState(() => _selectedMonth = val!);
-                            _fetchPreviewData(); // REFRESH DATA SAAT GANTI BULAN
+                            _fetchPreviewData();
                           },
                         ),
                       ),
@@ -346,7 +518,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
                               .toList(),
                           onChanged: (val) {
                             setState(() => _selectedYear = val!);
-                            _fetchPreviewData(); // REFRESH DATA SAAT GANTI TAHUN
+                            _fetchPreviewData();
                           },
                         ),
                       ),
@@ -358,7 +530,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
 
             const SizedBox(height: 20),
 
-            // 2. LIVE DOCUMENT PREVIEW (REAL DATA)
+            // 2. LIVE DOCUMENT PREVIEW (Miniatur di Layar)
             Expanded(
               child: Center(
                 child: _isLoadingPreview
@@ -369,7 +541,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
 
             const SizedBox(height: 20),
 
-            // 3. TOMBOL DOWNLOAD
+            // 3. TOMBOL DOWNLOAD / PRINT
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
@@ -477,7 +649,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
     );
   }
 
-  // --- WIDGET DROPDOWN ---
+  // --- Widget Helper UI Layar ---
   Widget _buildModernDropdown<T>({
     required T value,
     required List<DropdownMenuItem<T>> items,
@@ -513,10 +685,8 @@ class _LaporanScreenState extends State<LaporanScreen> {
     );
   }
 
-  // --- WIDGET PREVIEW REAL (LIVE DATA) ---
   Widget _buildLiveDocumentPreview(Color color) {
     if (_previewData.isEmpty) {
-      // Tampilan Kalau Kosong
       return Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -534,9 +704,8 @@ class _LaporanScreenState extends State<LaporanScreen> {
         ],
       );
     }
-
     return Container(
-      height: 380, // Ukuran Kertas
+      height: 380,
       width: 280,
       decoration: BoxDecoration(
         color: Colors.white,
@@ -551,7 +720,6 @@ class _LaporanScreenState extends State<LaporanScreen> {
       ),
       child: Column(
         children: [
-          // Header Biru
           Container(
             height: 10,
             width: double.infinity,
@@ -562,14 +730,12 @@ class _LaporanScreenState extends State<LaporanScreen> {
               ),
             ),
           ),
-
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Judul Mini
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -587,8 +753,6 @@ class _LaporanScreenState extends State<LaporanScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-
-                  // Table Header Mini
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     color: Colors.grey[100],
@@ -629,8 +793,6 @@ class _LaporanScreenState extends State<LaporanScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-
-                  // LIST DATA TRANSAKSI (Scrollable inside paper)
                   Expanded(
                     child: ListView.builder(
                       itemCount: _previewData.length,
@@ -641,11 +803,9 @@ class _LaporanScreenState extends State<LaporanScreen> {
                         ).format(DateTime.parse(item['created_at']).toLocal());
                         final type = item['type'];
                         final amount = item['amount'] ?? 0;
-                        // Kalau masuk: Nama Pembayar, Kalau keluar: Judul Pengeluaran
                         final desc = type == 'IN'
                             ? (item['payer_name'] ?? '-')
                             : (item['title'] ?? '-');
-
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 2),
                           child: Row(
@@ -689,10 +849,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
                       },
                     ),
                   ),
-
                   const Divider(thickness: 0.5),
-
-                  // Total Mini
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
