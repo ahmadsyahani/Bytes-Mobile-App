@@ -48,7 +48,7 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
       _titleController.text = task['title'] ?? '';
       _descController.text = task['description'] ?? '';
       _linkController.text = task['link_url'] ?? '';
-      _selectedMatkul = task['matkul']; // Pastikan teks sama persis dengan list
+      _selectedMatkul = task['matkul'];
       _selectedType = task['type'] ?? 'Individu';
 
       try {
@@ -67,9 +67,71 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
     super.dispose();
   }
 
-  // ... (Fungsi _showCustomDatePicker dan _showCustomPicker SAMA SEPERTI SEBELUMNYA) ...
-  // Biar hemat tempat, copy paste fungsi _showCustomDatePicker dan _showCustomPicker dari code sebelumnya kesini ya
-  // ATAU PAKAI CODE FULL DI BAWAH KALAU MAU LANGSUNG JADI
+  // --- FUNGSI BARU: HAPUS TUGAS DENGAN POP UP ---
+  Future<void> _deleteTask() async {
+    // 1. Tampilkan Dialog Konfirmasi
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text(
+            "Hapus Tugas?",
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: const Text("Tugas ini akan dihapus permanen. Yakin?"),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text("Batal", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              onPressed: () => Navigator.of(context).pop(true), // Yakin Hapus
+              child: const Text("Hapus"),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return; // Kalau batal, stop disini
+
+    setState(() => _isLoading = true);
+
+    try {
+      // 2. Hapus dari Database
+      await _supabase.from('tasks').delete().eq('id', widget.taskToEdit!['id']);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Tugas berhasil dihapus"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.pop(context, true); // Balik ke halaman depan & refresh
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Gagal menghapus: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   void _showCustomDatePicker() {
     DateTime tempPickedDate = _selectedDate ?? DateTime.now();
@@ -124,7 +186,7 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
                     initialDate: tempPickedDate,
                     firstDate: DateTime.now().subtract(
                       const Duration(days: 365),
-                    ), // Bisa edit tugas masa lalu
+                    ),
                     lastDate: DateTime(2030),
                     onDateChanged: (newDate) => tempPickedDate = newDate,
                   ),
@@ -202,7 +264,6 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
     );
   }
 
-  // --- LOGIC SIMPAN (INSERT / UPDATE) ---
   Future<void> _submitTask() async {
     if (_titleController.text.isEmpty ||
         _selectedMatkul == null ||
@@ -229,13 +290,11 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
       };
 
       if (_isEditMode) {
-        // --- LOGIC UPDATE ---
         await _supabase
             .from('tasks')
             .update(taskData)
-            .eq('id', widget.taskToEdit!['id']); // Cari berdasarkan ID
+            .eq('id', widget.taskToEdit!['id']);
       } else {
-        // --- LOGIC INSERT ---
         await _supabase.from('tasks').insert(taskData);
       }
 
@@ -303,6 +362,7 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
     padding: const EdgeInsets.only(bottom: 8),
     child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold)),
   );
+
   InputDecoration _inputDecor(String hint) => InputDecoration(
     hintText: hint,
     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -325,7 +385,6 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        // Ubah Judul Dinamis
         title: Text(
           _isEditMode ? "Edit Tugas" : "Tambah Tugas Baru",
           style: const TextStyle(
@@ -356,14 +415,12 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
               ),
             ),
             const SizedBox(height: 20),
-
             _buildLabel("Judul Tugas"),
             TextField(
               controller: _titleController,
               decoration: _inputDecor("Contoh: Laporan Praktikum Modul 1"),
             ),
             const SizedBox(height: 20),
-
             _buildLabel("Deadline"),
             _buildCustomSelector(
               hint: "Pilih Tanggal Deadline",
@@ -376,7 +433,6 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
               onTap: _showCustomDatePicker,
             ),
             const SizedBox(height: 20),
-
             _buildLabel("Tipe Tugas"),
             _buildCustomSelector(
               hint: "Pilih Tipe",
@@ -388,7 +444,6 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
               ),
             ),
             const SizedBox(height: 20),
-
             _buildLabel("Deskripsi (Opsional)"),
             TextField(
               controller: _descController,
@@ -397,6 +452,8 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
             ),
 
             const SizedBox(height: 30),
+
+            // TOMBOL SIMPAN
             SizedBox(
               width: double.infinity,
               height: 50,
@@ -410,16 +467,46 @@ class _AddTugasScreenState extends State<AddTugasScreen> {
                 ),
                 child: _isLoading
                     ? const CircularProgressIndicator(color: Colors.white)
-                    // Text tombol juga dinamis
                     : Text(
                         _isEditMode ? "Simpan Perubahan" : "Simpan Tugas",
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
+                          fontSize: 16,
                         ),
                       ),
               ),
             ),
+
+            // --- TOMBOL HAPUS (HANYA MUNCUL DI EDIT MODE) ---
+            if (_isEditMode) ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: TextButton(
+                  onPressed: _isLoading
+                      ? null
+                      : _deleteTask, // Panggil fungsi hapus
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.red, // Text Merah
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(
+                        color: Colors.red,
+                      ), // Garis pinggir merah
+                    ),
+                  ),
+                  child: const Text(
+                    "Hapus Tugas Ini",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ),
+            ],
+
+            // ------------------------------------------------
+            const SizedBox(height: 20), // Tambahan space biar ga mentok bawah
           ],
         ),
       ),

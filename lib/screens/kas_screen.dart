@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart'; // PERLU INI BUAT BUKA LINK
 
 class KasScreen extends StatefulWidget {
   const KasScreen({super.key});
@@ -13,19 +14,14 @@ class KasScreen extends StatefulWidget {
 class _KasScreenState extends State<KasScreen> {
   final _supabase = Supabase.instance.client;
 
-  // Controller Nominal
   final TextEditingController _amountController = TextEditingController();
-
-  // Controller Keterangan (Hanya dipakai kalau pilih 'Lainnya')
   final TextEditingController _customNoteController = TextEditingController();
 
   bool _isLoading = false;
 
-  // --- OPSI KATEGORI ---
   final List<String> _categories = ["Uang Kas", "Denda", "Lainnya"];
-  String _selectedCategory = "Uang Kas"; // Default pilihan
+  String _selectedCategory = "Uang Kas";
 
-  // Pilihan Nominal Cepat
   final List<int> _quickAmounts = [10000, 20000, 50000, 100000];
 
   @override
@@ -35,11 +31,18 @@ class _KasScreenState extends State<KasScreen> {
     super.dispose();
   }
 
-  // --- POPUP SUKSES ---
-  void _showSuccessDialog() {
+  // --- FUNGSI BUKA BROWSER ---
+  Future<void> _launchPaymentUrl(String url) async {
+    final Uri uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw 'Tidak bisa membuka link pembayaran: $url';
+    }
+  }
+
+  // --- DIALOG MENUNGGU (SETELAH BROWSER DITUTUP) ---
+  void _showWaitingDialog() {
     showDialog(
       context: context,
-      barrierDismissible: false, // Wajib klik tombol buat tutup
       builder: (BuildContext context) {
         return Dialog(
           shape: RoundedRectangleBorder(
@@ -54,36 +57,19 @@ class _KasScreenState extends State<KasScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Icon Centang
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade100,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.check_rounded,
-                    color: Colors.green,
-                    size: 40,
-                  ),
-                ),
+                const Icon(Icons.payment, color: Colors.blue, size: 50),
                 const SizedBox(height: 20),
                 const Text(
-                  "Pembayaran Sukses!",
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
+                  "Selesaikan Pembayaran",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 const Text(
-                  "Terima kasih, uang kas kamu sudah tercatat di sistem.",
+                  "Silakan selesaikan pembayaran di browser/aplikasi yang terbuka.\n\nJika sudah, saldo akan otomatis bertambah di sini.",
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey, fontSize: 14),
+                  style: TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 24),
-                // Tombol Kembali
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -91,20 +77,7 @@ class _KasScreenState extends State<KasScreen> {
                       Navigator.of(context).pop(); // Tutup Dialog
                       Navigator.of(context).pop(true); // Kembali ke Home
                     },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4C6EF5),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text(
-                      "Kembali ke Homepage",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: const Text("Saya Sudah Bayar / Tutup"),
                   ),
                 ),
               ],
@@ -115,9 +88,8 @@ class _KasScreenState extends State<KasScreen> {
     );
   }
 
-  // --- LOGIC KIRIM PEMBAYARAN ---
   Future<void> _submitPayment() async {
-    // 1. TENTUKAN JUDUL & KATEGORI
+    // 1. VALIDASI INPUT
     String finalTitle = "";
     String finalCategory = "Uang Kas";
 
@@ -125,7 +97,7 @@ class _KasScreenState extends State<KasScreen> {
       if (_customNoteController.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Harap isi keterangan untuk 'Lainnya'"),
+            content: Text("Harap isi keterangan"),
             backgroundColor: Colors.red,
           ),
         );
@@ -138,11 +110,10 @@ class _KasScreenState extends State<KasScreen> {
       finalCategory = _selectedCategory;
     }
 
-    // 2. VALIDASI NOMINAL
     if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Harap isi nominal pembayaran"),
+          content: Text("Isi nominal dulu bro"),
           backgroundColor: Colors.red,
         ),
       );
@@ -153,9 +124,9 @@ class _KasScreenState extends State<KasScreen> {
 
     try {
       final user = _supabase.auth.currentUser;
-      if (user == null) throw "User tidak terdeteksi. Silakan login ulang.";
+      if (user == null) throw "User tidak login.";
 
-      // Ambil Nama User
+      // Ambil Nama
       final userProfile = await _supabase
           .from('profiles')
           .select('full_name')
@@ -163,11 +134,14 @@ class _KasScreenState extends State<KasScreen> {
           .single();
       String myName = userProfile['full_name'] ?? 'Tanpa Nama';
 
-      // Bersihkan Format Uang
+      // Parse Nominal
       final String cleanAmount = _amountController.text.replaceAll('.', '');
       final int amount = int.parse(cleanAmount);
 
-      // 3. INSERT DATABASE
+      // Generate Order ID Unik
+      String orderId = "KAS-${DateTime.now().millisecondsSinceEpoch}";
+
+      // 2. SIMPAN DATA KE DB (STATUS: PENDING)
       await _supabase.from('kas_transactions').insert({
         'user_id': user.id,
         'payer_name': myName,
@@ -175,14 +149,35 @@ class _KasScreenState extends State<KasScreen> {
         'amount': amount,
         'type': 'IN',
         'category': finalCategory,
-        'created_at': DateTime.now()
-            .toUtc()
-            .toIso8601String(), // Wajib UTC biar jam gak ngaco
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'status': 'PENDING',
+        'order_id': orderId,
       });
 
-      if (mounted) {
-        // TAMPILKAN POPUP SUKSES
-        _showSuccessDialog();
+      // 3. PANGGIL ROBOT KASIR (EDGE FUNCTION) 🤖
+      // Ini request link bayar ke server yang barusan kita deploy
+      final functionResponse = await _supabase.functions.invoke(
+        'midtrans-payment',
+        body: {'order_id': orderId, 'gross_amount': amount},
+      );
+
+      // Cek Error dari Server
+      if (functionResponse.status != 200) {
+        throw "Gagal minta link bayar. Server error.";
+      }
+
+      final data = functionResponse.data;
+      final String? paymentUrl = data['redirect_url']; // Link dari Midtrans
+
+      if (paymentUrl != null) {
+        // 4. BUKA LINK PEMBAYARAN DI BROWSER
+        await _launchPaymentUrl(paymentUrl);
+
+        if (mounted) {
+          _showWaitingDialog(); // Tampilkan instruksi
+        }
+      } else {
+        throw "Link pembayaran tidak ditemukan.";
       }
     } catch (e) {
       if (mounted) {
@@ -195,6 +190,7 @@ class _KasScreenState extends State<KasScreen> {
     }
   }
 
+  // --- UI WIDGETS ---
   String _formatNumber(int number) {
     final formatter = NumberFormat.decimalPattern('id');
     return formatter.format(number);
@@ -231,7 +227,6 @@ class _KasScreenState extends State<KasScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- 1. INPUT NOMINAL ---
             const Text(
               "Mau bayar berapa hari ini?",
               style: TextStyle(
@@ -287,7 +282,6 @@ class _KasScreenState extends State<KasScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 24),
             const Text(
               "Pilihan Cepat",
@@ -309,16 +303,12 @@ class _KasScreenState extends State<KasScreen> {
                 );
               }).toList(),
             ),
-
             const SizedBox(height: 30),
-
-            // --- 2. KATEGORI PEMBAYARAN ---
             const Text(
               "Untuk Pembayaran Apa?",
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -361,14 +351,12 @@ class _KasScreenState extends State<KasScreen> {
                 );
               }).toList(),
             ),
-
-            // --- 3. INPUT MANUAL (JIKA PILIH LAINNYA) ---
             if (_selectedCategory == "Lainnya") ...[
               const SizedBox(height: 20),
               TextField(
                 controller: _customNoteController,
                 decoration: InputDecoration(
-                  hintText: "Tulis keterangan pembayaran...",
+                  hintText: "Tulis keterangan...",
                   filled: true,
                   fillColor: Colors.white,
                   border: OutlineInputBorder(
@@ -379,10 +367,7 @@ class _KasScreenState extends State<KasScreen> {
                 ),
               ),
             ],
-
             const SizedBox(height: 40),
-
-            // --- TOMBOL BAYAR ---
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -415,7 +400,6 @@ class _KasScreenState extends State<KasScreen> {
   }
 }
 
-// FORMATTER UANG
 class CurrencyInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(

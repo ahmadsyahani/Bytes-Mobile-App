@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart'; // 1. IMPORT INI WAJIB
 
 // WIDGETS
 import '../widgets/header_section.dart';
 import '../widgets/finance_card.dart';
 import '../widgets/menu_button.dart';
-import '../widgets/schedule_card.dart';
 import '../widgets/custom_bottom_nav.dart';
 
 // SCREENS
@@ -16,9 +16,8 @@ import 'materi_screen.dart';
 import 'tugas_screen.dart';
 import 'jadwal_screen.dart';
 import 'kas_screen.dart';
-import 'cek_kas_screen.dart'; // Pastikan ini ada
+import 'cek_kas_screen.dart';
 import 'profile_screen.dart';
-// import 'classmate_screen.dart'; // Gak perlu di import di sini kalau cuma ada di Navbar
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,9 +36,11 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _upcomingTasks = [];
   List<Map<String, dynamic>> _todaysSchedule = [];
 
-  // ROLE USER (Default member)
-  String _userRole = 'member';
+  // VARIABLE KHUSUS KAS
+  int _myTotalKasPaid = 0;
+  bool _isLoadingKas = true;
 
+  String _userRole = 'member';
   bool _showBirthdayBanner = true;
   bool _isLoading = true;
 
@@ -49,29 +50,28 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadDataWithCache();
   }
 
-  // --- FUNGSI LOAD DATA ---
+  // --- LOGIC UTAMA: FETCH DATA & HILANGKAN SPLASH SCREEN ---
   Future<void> _loadDataWithCache() async {
     final prefs = await SharedPreferences.getInstance();
     final userId = _supabase.auth.currentUser?.id;
 
     if (userId == null) return;
 
-    // 1. Load Cache Profil
+    // 1. Load Cache (Biar user liat sesuatu pas loading)
     final cachedProfile = prefs.getString('cached_profile');
     if (cachedProfile != null) {
       if (mounted) {
         setState(() {
           _profileData = jsonDecode(cachedProfile);
-          // Ambil role dari cache kalau ada
           _userRole = _profileData?['role'] ?? 'member';
         });
       }
     }
 
     try {
-      // 2. Fetch Data Segar dari Supabase
+      // 2. FETCH SEMUA DATA DARI SUPABASE (WAITING...)
 
-      // A. Profil & Role
+      // A. Profil
       final profileRes = await _supabase
           .from('profiles')
           .select()
@@ -80,7 +80,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // B. Ulang Tahun
       final birthdayRes = await _supabase.rpc('get_birthday_mates');
 
-      // C. TUGAS TERDEKAT (LOGIC FILTER H-5)
+      // C. Tugas H-5
       final now = DateTime.now();
       final todayStart = DateTime(
         now.year,
@@ -88,7 +88,6 @@ class _HomeScreenState extends State<HomeScreen> {
         now.day,
       ).toIso8601String();
       final fiveDaysLater = now.add(const Duration(days: 5)).toIso8601String();
-
       final tasksRes = await _supabase
           .from('tasks')
           .select()
@@ -96,37 +95,57 @@ class _HomeScreenState extends State<HomeScreen> {
           .lte('deadline', fiveDaysLater)
           .order('deadline', ascending: true);
 
-      // D. JADWAL HARI INI
-      int todayIndex = DateTime.now().weekday; // 1=Senin
-
+      // D. Jadwal Hari Ini
+      int todayIndex = DateTime.now().weekday;
       final scheduleRes = await _supabase
           .from('schedules')
           .select()
           .eq('day', todayIndex)
           .order('time_start', ascending: true);
 
+      // E. Hitung Kas
+      final kasRes = await _supabase
+          .from('kas_transactions')
+          .select('amount')
+          .eq('user_id', userId)
+          .eq('type', 'IN')
+          .eq('status', 'SUCCESS');
+
+      int totalBayar = 0;
+      for (var item in kasRes) {
+        totalBayar += (item['amount'] as int);
+      }
+
+      // 3. SETELAH DATA DAPAT, UPDATE UI & HILANGKAN SPLASH
       if (mounted) {
         setState(() {
           if (profileRes.isNotEmpty) {
             _profileData = profileRes.first;
-            // UPDATE ROLE DARI DATABASE
             _userRole = _profileData?['role'] ?? 'member';
           }
           _birthdayMates = List<Map<String, dynamic>>.from(birthdayRes);
           _upcomingTasks = List<Map<String, dynamic>>.from(tasksRes);
           _todaysSchedule = List<Map<String, dynamic>>.from(scheduleRes);
 
+          _myTotalKasPaid = totalBayar;
+          _isLoadingKas = false;
           _isLoading = false;
         });
 
-        // Simpan cache
+        // Simpan Cache
         await prefs.setString('cached_profile', jsonEncode(profileRes.first));
         await prefs.setString('cached_birthday', jsonEncode(birthdayRes));
+
+        // --- INI KUNCINYA BRO ---
+        // Hapus Splash Screen Native karena data udah siap ditampilkan
+        FlutterNativeSplash.remove();
       }
     } catch (e) {
       debugPrint("Error Fetch Data: $e");
       if (mounted) {
         setState(() => _isLoading = false);
+        // Kalau error pun, tetep hapus splash biar ga nge-stuck
+        FlutterNativeSplash.remove();
       }
     }
   }
@@ -135,41 +154,12 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadDataWithCache();
   }
 
-  // --- HELPER LOGIC ---
   String _getGreeting() {
     var hour = DateTime.now().hour;
     if (hour >= 4 && hour < 11) return "Selamat Pagi";
     if (hour >= 11 && hour < 15) return "Selamat Siang";
     if (hour >= 15 && hour < 18) return "Selamat Sore";
     return "Selamat Malam";
-  }
-
-  String _getTodayDateString() {
-    final now = DateTime.now();
-    List<String> days = [
-      "Senin",
-      "Selasa",
-      "Rabu",
-      "Kamis",
-      "Jumat",
-      "Sabtu",
-      "Minggu",
-    ];
-    List<String> months = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "Mei",
-      "Jun",
-      "Jul",
-      "Agu",
-      "Sep",
-      "Okt",
-      "Nov",
-      "Des",
-    ];
-    return "${days[now.weekday - 1]}, ${now.day} ${months[now.month - 1]}";
   }
 
   String _formatTime(String timeStr) {
@@ -218,10 +208,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final Color primaryBlue = const Color(0xFF4C6EF5);
-    final Color cardBlue = const Color(0xFF7B94FF);
-    final Color yellowAccent = const Color(0xFFFFCE31);
 
     if (_isLoading && _profileData == null) {
+      // Fallback UI (biasanya ga keliatan karena ketutupan splash screen native)
       return const Scaffold(
         backgroundColor: Color(0xFFF9F8F4),
         body: Center(child: CircularProgressIndicator()),
@@ -231,8 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
     String fullName = _profileData?['full_name'] ?? "Mahasiswa";
     String nrp = _profileData?['nrp'] ?? "-";
     String? photoUrl = _profileData?['photo_url'];
-    int kasTotal = _profileData?['kas_total'] ?? 0;
-    int kasPaid = _profileData?['kas_paid'] ?? 0;
+    int kasTotalTarget = _profileData?['kas_total'] ?? 200000;
 
     String displayName = fullName.split(" ")[0];
     if (_profileData?['nickname'] != null &&
@@ -253,7 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // HEADER
+                  // --- HEADER SECTION (CLEAN VERSION) ---
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -263,20 +251,33 @@ class _HomeScreenState extends State<HomeScreen> {
                         greeting: _getGreeting(),
                         photoUrl: photoUrl,
                       ),
+
+                      // CARD KAS
                       Positioned(
                         bottom: -60,
                         left: 24,
                         right: 24,
-                        child: FinanceCard(
-                          paidAmount: kasPaid,
-                          totalAmount: kasTotal,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const KasScreen(),
-                            ),
-                          ),
-                        ),
+                        child: _isLoadingKas
+                            ? Container(
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              )
+                            : FinanceCard(
+                                paidAmount: _myTotalKasPaid,
+                                totalAmount: kasTotalTarget,
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const KasScreen(),
+                                  ),
+                                ).then((_) => _refreshData()),
+                              ),
                       ),
                     ],
                   ),
@@ -294,7 +295,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // MENU 1: CEK KAS (BALIK LAGI)
                         MenuButton(
                           icon: Icons.account_balance_wallet_rounded,
                           label: "Cek Kas",
@@ -306,8 +306,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ),
-
-                        // MENU 2: TUGAS (LOGIC ADMIN)
                         MenuButton(
                           icon: Icons.assignment,
                           label: "Tugas",
@@ -315,14 +313,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              // Kirim parameter: kalau BUKAN admin, berarti ReadOnly (Gak bisa edit)
                               builder: (context) =>
                                   TugasScreen(isReadOnly: _userRole != 'admin'),
                             ),
                           ).then((_) => _refreshData()),
                         ),
-
-                        // MENU 3: JADWAL
                         MenuButton(
                           icon: Icons.calendar_today_rounded,
                           label: "Jadwal",
@@ -334,8 +329,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ),
-
-                        // MENU 4: MATERI
                         MenuButton(
                           icon: Icons.folder,
                           label: "Materi",
@@ -353,35 +346,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   const SizedBox(height: 30),
 
-                  // JADWAL HARI INI
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                  // JUDUL JADWAL
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 24),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
+                        Text(
                           "Jadwal Hari ini",
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        Text(
-                          _getTodayDateString(),
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: primaryBlue,
-                          ),
-                        ),
                       ],
                     ),
                   ),
 
+                  // JADWAL LIST (MODERN BLUE STYLE)
                   if (_todaysSchedule.isEmpty)
                     _buildEmptyScheduleState()
                   else
-                    _buildJadwalList(_todaysSchedule, cardBlue, yellowAccent),
+                    _buildModernScheduleList(_todaysSchedule, primaryBlue),
 
                   const SizedBox(height: 30),
 
@@ -403,14 +389,16 @@ class _HomeScreenState extends State<HomeScreen> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                // Pas klik 'Lihat Semua' juga kirim logic admin
                                 builder: (context) => TugasScreen(
                                   isReadOnly: _userRole != 'admin',
                                 ),
                               ),
                             ).then((_) => _refreshData());
                           },
-                          child: const Text("Lihat Semua"),
+                          child: const Text(
+                            "Lihat Semua",
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
                         ),
                       ],
                     ),
@@ -444,6 +432,191 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // --- WIDGETS BUILDER ---
+
+  Widget _buildModernScheduleList(
+    List<Map<String, dynamic>> schedules,
+    Color primaryBlue,
+  ) {
+    return SizedBox(
+      height: 170,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        scrollDirection: Axis.horizontal,
+        itemCount: schedules.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 16),
+        itemBuilder: (context, index) {
+          final schedule = schedules[index];
+          final isReplacement = schedule['is_replacement'] == true;
+
+          Color cardColor = isReplacement
+              ? const Color(0xFFFF9800)
+              : primaryBlue;
+
+          return Container(
+            width: 300,
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: cardColor.withOpacity(0.4),
+                  blurRadius: 15,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Stack(
+              children: [
+                // HIASAN
+                Positioned(
+                  top: -20,
+                  right: -20,
+                  child: Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  bottom: -30,
+                  left: -10,
+                  child: Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+
+                // KONTEN
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Header Card (Waktu)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.access_time_rounded,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  "${_formatTime(schedule['time_start'])} - ${_formatTime(schedule['time_end'])}",
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Badge Tipe
+                          if (isReplacement || schedule['type'] == 'Praktek')
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                isReplacement ? "PENGGANTI" : "PRAKTEK",
+                                style: TextStyle(
+                                  color: cardColor,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+
+                      // Nama Matkul
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            schedule['matkul'],
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              height: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            schedule['lecturer'] ?? "Dosen Pengampu",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      // Lokasi
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.location_on_rounded,
+                            size: 16,
+                            color: Colors.white.withOpacity(0.9),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              schedule['room'],
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Widget _buildDynamicTaskList() {
     if (_upcomingTasks.isEmpty) {
@@ -616,34 +789,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildJadwalList(
-    List<Map<String, dynamic>> schedules,
-    Color cardBlue,
-    Color yellowAccent,
-  ) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      child: Row(
-        children: schedules.map((schedule) {
-          return Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: ScheduleCard(
-              time:
-                  "${_formatTime(schedule['time_start'])} - ${_formatTime(schedule['time_end'])}",
-              title: schedule['matkul'],
-              subtitle: schedule['type'] ?? 'Teori',
-              room: schedule['room'],
-              lecturer: schedule['lecturer'],
-              color: cardBlue,
-              accentColor: yellowAccent,
-            ),
-          );
-        }).toList(),
       ),
     );
   }

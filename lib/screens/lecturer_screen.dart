@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class LecturerScreen extends StatefulWidget {
   const LecturerScreen({super.key});
@@ -8,69 +9,50 @@ class LecturerScreen extends StatefulWidget {
 }
 
 class _LecturerScreenState extends State<LecturerScreen> {
+  final _supabase = Supabase.instance.client;
   final TextEditingController _searchController = TextEditingController();
 
-  // DATA DUMMY DOSEN (Tambah field 'room')
-  final List<Map<String, String>> _allLecturers = [
-    {
-      "name": "Dr. Ir. Budi Santoso, M.Kom",
-      "nip": "19820101 200501 1 001",
-      "matkul": "Logika & Algoritma",
-      "gender": "L",
-      "photo": "https://i.pravatar.cc/150?u=budi",
-      "room": "Ruang Dosen 1 (Gedung A)",
-    },
-    {
-      "name": "Siti Aminah, S.T., M.T.",
-      "nip": "19850315 200812 2 003",
-      "matkul": "Basis Data",
-      "gender": "P",
-      "photo": "https://i.pravatar.cc/150?u=siti",
-      "room": "Lab Database",
-    },
-    {
-      "name": "Pak Dika, S.Kom",
-      "nip": "19900520 201504 1 005",
-      "matkul": "Workshop Desain Web",
-      "gender": "L",
-      "photo": "https://i.pravatar.cc/150?u=dika",
-      "room": "Lab Multimedia",
-    },
-    {
-      "name": "Prof. Ambasink",
-      "nip": "19750817 199903 1 002",
-      "matkul": "Konsep Pemrograman",
-      "gender": "L",
-      "photo": "https://i.pravatar.cc/150?u=amba",
-      "room": "Ruang Kajur",
-    },
-    {
-      "name": "Ibu Ratna Sari, M.Pd.",
-      "nip": "19881110 201001 2 004",
-      "matkul": "Bahasa Indonesia",
-      "gender": "P",
-      "photo": "https://i.pravatar.cc/150?u=ratna",
-      "room": "Ruang Dosen Umum",
-    },
-  ];
-
-  List<Map<String, String>> _filteredLecturers = [];
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _allLecturers = [];
+  List<Map<String, dynamic>> _filteredLecturers = [];
 
   @override
   void initState() {
     super.initState();
-    _filteredLecturers = _allLecturers;
+    _fetchLecturers();
   }
 
+  // --- AMBIL DATA DARI SUPABASE ---
+  Future<void> _fetchLecturers() async {
+    try {
+      final response = await _supabase
+          .from('lecturers')
+          .select()
+          .order('name', ascending: true);
+
+      if (mounted) {
+        setState(() {
+          _allLecturers = List<Map<String, dynamic>>.from(response);
+          _filteredLecturers = _allLecturers;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetch dosen: $e");
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // --- FILTER PENCARIAN ---
   void _runFilter(String keyword) {
-    List<Map<String, String>> results = [];
+    List<Map<String, dynamic>> results = [];
     if (keyword.isEmpty) {
       results = _allLecturers;
     } else {
       results = _allLecturers.where((item) {
-        final name = item['name']!.toLowerCase();
-        final matkul = item['matkul']!.toLowerCase();
-        final room = item['room']!.toLowerCase();
+        final name = (item['name'] ?? '').toLowerCase();
+        final matkul = (item['matkul'] ?? '').toLowerCase();
+        final room = (item['room'] ?? '').toLowerCase();
         final search = keyword.toLowerCase();
         return name.contains(search) ||
             matkul.contains(search) ||
@@ -105,7 +87,7 @@ class _LecturerScreenState extends State<LecturerScreen> {
       ),
       body: Column(
         children: [
-          // SEARCH BAR MODERN
+          // SEARCH BAR
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 10, 24, 20),
             child: Container(
@@ -136,7 +118,9 @@ class _LecturerScreenState extends State<LecturerScreen> {
 
           // LIST DOSEN
           Expanded(
-            child: _filteredLecturers.isEmpty
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredLecturers.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -173,13 +157,23 @@ class _LecturerScreenState extends State<LecturerScreen> {
     );
   }
 
-  // --- WIDGET KARTU DOSEN MODERN ---
-  Widget _buildModernLecturerCard(Map<String, String> data, Color primaryBlue) {
-    Color badgeBg = const Color(0xFFE3F2FD); // Default Biru Muda
-    Color badgeText = const Color(0xFF1565C0); // Default Biru Tua
+  // --- WIDGET KARTU DOSEN ---
+  Widget _buildModernLecturerCard(
+    Map<String, dynamic> data,
+    Color primaryBlue,
+  ) {
+    // Ambil data dengan aman (kasih default kalau null)
+    final name = data['name'] ?? 'Tanpa Nama';
+    final nip = data['nip'] ?? '-';
+    final matkul = data['matkul'] ?? 'Umum';
+    final room = data['room'] ?? '-';
+    final gender = data['gender'] ?? 'L';
+    final photoUrl = data['photo']; // Bisa null
 
-    // Warna Badge beda buat Dosen Cewek (Opsional)
-    if (data['gender'] == 'P') {
+    Color badgeBg = const Color(0xFFE3F2FD);
+    Color badgeText = const Color(0xFF1565C0);
+
+    if (gender == 'P') {
       badgeBg = const Color(0xFFFCE4EC);
       badgeText = const Color(0xFFC2185B);
     }
@@ -203,23 +197,35 @@ class _LecturerScreenState extends State<LecturerScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // FOTO DOSEN (FIX BUG)
+              // FOTO DOSEN
               Container(
                 width: 60,
                 height: 60,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.grey.shade200, width: 2),
-                  image: DecorationImage(
-                    image: NetworkImage(data['photo']!),
-                    fit: BoxFit.cover,
-                    // Error Handler: Kalau gambar gagal load, pake placeholder
-                    onError: (exception, stackTrace) {
-                      // Ini cuma handler internal flutter, visualnya nanti kosong/abu
-                    },
-                  ),
+                  color: Colors.grey.shade100, // Background kalau ga ada foto
+                  image: photoUrl != null && photoUrl.isNotEmpty
+                      ? DecorationImage(
+                          image: NetworkImage(photoUrl),
+                          fit: BoxFit.cover,
+                          onError: (e, s) {}, // Handle error silent
+                        )
+                      : null,
                 ),
-                // Fallback visual kalau gambar error (Opsional, bisa pakai Stack kalau mau expert)
+                // Fallback kalau foto null: Tampilkan Inisial
+                child: (photoUrl == null || photoUrl.isEmpty)
+                    ? Center(
+                        child: Text(
+                          name.substring(0, 1).toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: primaryBlue,
+                          ),
+                        ),
+                      )
+                    : null,
               ),
 
               const SizedBox(width: 16),
@@ -229,9 +235,8 @@ class _LecturerScreenState extends State<LecturerScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Nama Dosen
                     Text(
-                      data['name']!,
+                      name,
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
@@ -242,7 +247,6 @@ class _LecturerScreenState extends State<LecturerScreen> {
                     ),
                     const SizedBox(height: 4),
 
-                    // NIP
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -253,7 +257,7 @@ class _LecturerScreenState extends State<LecturerScreen> {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        "NIP: ${data['nip']}",
+                        "NIP: $nip",
                         style: TextStyle(
                           color: Colors.grey[600],
                           fontSize: 11,
@@ -265,7 +269,7 @@ class _LecturerScreenState extends State<LecturerScreen> {
                 ),
               ),
 
-              // Chat Button Kecil
+              // Chat Button
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -282,14 +286,12 @@ class _LecturerScreenState extends State<LecturerScreen> {
           ),
 
           const SizedBox(height: 16),
-          // GARIS PEMISAH
           Divider(height: 1, color: Colors.grey[100]),
           const SizedBox(height: 12),
 
-          // INFO BAWAH: MATKUL & RUANGAN
+          // INFO BAWAH
           Row(
             children: [
-              // Badge Matkul
               Expanded(
                 child: Row(
                   children: [
@@ -297,7 +299,7 @@ class _LecturerScreenState extends State<LecturerScreen> {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        data['matkul']!,
+                        matkul,
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -311,14 +313,13 @@ class _LecturerScreenState extends State<LecturerScreen> {
                 ),
               ),
 
-              // Lokasi Ruangan
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0), // Orange muda
+                  color: const Color(0xFFFFF3E0),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -327,10 +328,10 @@ class _LecturerScreenState extends State<LecturerScreen> {
                       Icons.location_on,
                       size: 14,
                       color: Color(0xFFEF6C00),
-                    ), // Orange Tua
+                    ),
                     const SizedBox(width: 4),
                     Text(
-                      data['room']!, // Ruangan
+                      room,
                       style: const TextStyle(
                         color: Color(0xFFEF6C00),
                         fontSize: 11,

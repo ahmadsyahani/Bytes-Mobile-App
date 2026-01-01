@@ -4,14 +4,14 @@ class HeaderSection extends StatelessWidget {
   final String fullName;
   final String nrp;
   final String greeting;
-  final String? photoUrl; // 1. Variabel ini WAJIB ada biar gak error
+  final String? photoUrl;
 
   const HeaderSection({
     super.key,
     required this.fullName,
     required this.nrp,
     required this.greeting,
-    this.photoUrl, // 2. Masukkan ke constructor (boleh null/kosong)
+    this.photoUrl,
   });
 
   @override

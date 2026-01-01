@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Tambahan Import
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart'; // Pastikan import ini ada
 
 // IMPORT SCREENS
 import 'screens/login_screen.dart';
-import 'screens/homepage.dart'; // Pastikan nama file ini sesuai (home_screen.dart atau homepage.dart)
-import 'screens/onboarding_screen.dart'; // Tambahan Import
+import 'screens/homepage.dart';
+import 'screens/onboarding_screen.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // 1. MODIFIKASI DISINI: Tangkap WidgetsBinding
+  WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+
+  // 2. TAHAN SPLASH SCREEN (Biar ga langsung ilang)
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
   // SETUP SUPABASE
   await Supabase.initialize(
@@ -69,7 +74,14 @@ class _AuthCheckState extends State<AuthCheck> {
     // 2. Cek apakah user sedang Login (Supabase)
     final session = Supabase.instance.client.auth.currentSession;
 
+    // Simulasi delay dikit biar splash screen ga kedip kecepetan (Optional)
+    // await Future.delayed(const Duration(milliseconds: 500));
+
     if (mounted) {
+      // 3. HILANGKAN SPLASH SCREEN DISINI
+      // Karena data udah siap, kita suruh native splash minggir
+      FlutterNativeSplash.remove();
+
       setState(() {
         _hasSeenOnboarding = seen;
         _isLoggedIn = session != null;
@@ -81,6 +93,7 @@ class _AuthCheckState extends State<AuthCheck> {
   @override
   Widget build(BuildContext context) {
     // Tampilkan Loading putih bersih saat sedang mengecek
+    // (Sebenernya user ga bakal liat ini lagi karena ketutupan Splash Screen, tapi biarin aja buat safety)
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: Colors.white,
